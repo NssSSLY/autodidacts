@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: autodidact
+      POSTGRES_PASSWORD: autodidact
+      POSTGRES_DB: autodidact
+    ports:
+      - "5432:5432"
+    volumes:
+      - autodidact_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autodidact -d autodidact"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  autodidact_pg:

@@ -1,0 +1,14 @@
+# Copy this file to config/web_models.yaml and fill selectors only for sites
+# whose terms and account permissions allow browser automation.
+# Do not configure CAPTCHA bypass or anti-bot circumvention.
+providers:
+  example_model:
+    url: "https://example.com/chat"
+    persistent_profile_dir: ".browser/example_model"
+    headless: false
+    input_selector: "textarea"
+    send_selector: "button[type='submit']"
+    assistant_message_selector: ".assistant-message"
+    new_chat_selector: null
+    done_selector: null
+    response_timeout_seconds: 120

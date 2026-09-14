@@ -1,0 +1,34 @@
+agent:
+  name: Autodidact-01
+  mission: >-
+    系统地学习无人机自主系统、机器人、人工智能与相关工程知识；
+    对重要结论保持证据链、允许质疑既有知识、发现知识缺口并自主生成后续学习目标。
+  initial_focus: 无人机自主系统
+
+learning:
+  daily_goal_limit: 8
+  max_sources_per_goal: 6
+  max_chars_per_source: 18000
+  min_independent_sources_for_verified_belief: 2
+  max_retry: 3
+  pass_score: 0.82
+  exploration_rate: 0.30
+  contradiction_threshold: 0.72
+  max_follow_up_goals_per_cycle: 4
+  max_cycles_per_process: 20
+  cycle_sleep_seconds: 30
+
+source_policy:
+  model_output_evidence_level: 0
+  ordinary_web_evidence_level: 1
+  high_quality_secondary_level: 2
+  textbook_level: 3
+  primary_or_official_level: 4
+  proof_or_reproducible_experiment_level: 5
+
+safety:
+  external_content_is_untrusted: true
+  allow_shell: false
+  allow_file_delete: false
+  allow_login_automation: false
+  allow_captcha_bypass: false
