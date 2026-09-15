@@ -15,12 +15,16 @@ from autodidact import models  # noqa: F401
 from autodidact.config import runtime_settings
 from autodidact.db import Base
 
+HEAD_REVISION = "20260915_0002"
+POST_BASELINE_COLUMNS = {
+    "sources": {"normalized_url", "publisher_key", "quality_class", "quality_reason"},
+}
 BASELINE_REVISION = "20260914_0001"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 
-MigrationAction = Literal["upgrade", "stamp_then_upgrade"]
+MigrationAction = Literal["upgrade", "stamp_then_upgrade", "stamp_head"]
 
 
 def alembic_config() -> Config:
@@ -39,6 +43,16 @@ def expected_schema_columns() -> dict[str, set[str]]:
     }
 
 
+def baseline_schema_columns() -> dict[str, set[str]]:
+    baseline = {
+        table_name: set(column_names)
+        for table_name, column_names in expected_schema_columns().items()
+    }
+    for table_name, column_names in POST_BASELINE_COLUMNS.items():
+        baseline[table_name].difference_update(column_names)
+    return baseline
+
+
 def decide_initialization_action(
     existing_columns: Mapping[str, AbstractSet[str]],
 ) -> MigrationAction:
@@ -51,7 +65,7 @@ def decide_initialization_action(
     if not present_app_tables:
         return "upgrade"
 
-    missing_tables = set(expected).difference(existing_columns)
+    missing_tables = set(expected) - set(existing_columns)
     if missing_tables:
         names = ", ".join(sorted(missing_tables))
         raise RuntimeError(
@@ -59,23 +73,28 @@ def decide_initialization_action(
             f"缺少数据表：{names}。为保护已有学习状态，已停止自动迁移。"
         )
 
+    actual = {table_name: set(existing_columns[table_name]) for table_name in expected}
+    if actual == expected:
+        return "stamp_head"
+
+    baseline = baseline_schema_columns()
+    if actual == baseline:
+        return "stamp_then_upgrade"
+
     mismatches: list[str] = []
     for table_name, expected_names in expected.items():
-        actual_names = set(existing_columns[table_name])
+        actual_names = actual[table_name]
         if actual_names != expected_names:
             missing = sorted(expected_names - actual_names)
             extra = sorted(actual_names - expected_names)
-            mismatches.append(
-                f"{table_name}(缺少={missing or '无'}, 多出={extra or '无'})"
-            )
+            mismatches.append(f"{table_name}(缺少={missing or '无'}, 多出={extra or '无'})")
     if mismatches:
         details = "; ".join(mismatches)
         raise RuntimeError(
-            "检测到旧数据库结构与 V0.1 基线不一致。为避免错误标记版本，"
-            f"已停止自动迁移：{details}"
+            f"检测到旧数据库结构与 V0.1 基线不一致。为避免错误标记版本，已停止自动迁移：{details}"
         )
 
-    return "stamp_then_upgrade"
+    raise AssertionError("unreachable schema comparison")
 
 
 def _existing_columns(connection: Connection) -> dict[str, set[str]]:
@@ -91,6 +110,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
     action = decide_initialization_action(_existing_columns(connection))
     if action == "stamp_then_upgrade":
         command.stamp(config, BASELINE_REVISION)
+    elif action == "stamp_head":
+        command.stamp(config, "head")
     command.upgrade(config, "head")
 
 

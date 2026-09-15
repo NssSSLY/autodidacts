@@ -5,6 +5,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from autodidact import models
 from autodidact.brain.llm import LLM
 from autodidact.config import agent_config
 from autodidact.enums import GoalSource, GoalStatus
@@ -12,10 +13,12 @@ from autodidact.goals.generator import GoalGenerator
 from autodidact.goals.scorer import goal_score
 from autodidact.knowledge.conflicts import ConflictDetector
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
+from autodidact.knowledge.sources import EvidenceSource, normalize_url
 from autodidact.learning.evaluator import Evaluator
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
 from autodidact.learning.synthesizer import Synthesizer
+from autodidact.normalization import normalize_text_key
 from autodidact.repository import Repository
 from autodidact.schemas import CandidateGoal, SourceDocument
 from autodidact.tools.reader import WebReader
@@ -40,7 +43,8 @@ class AutonomousLearner:
         self.conflicts = ConflictDetector(llm)
         self.cfg = agent_config()
         self.promotion = BeliefPromotionPolicy(
-            self.cfg.learning.min_independent_sources_for_verified_belief
+            self.cfg.learning.min_independent_sources_for_verified_belief,
+            self.cfg.learning.min_evidence_level_for_verified_belief,
         )
         self.goal_generator = GoalGenerator(llm)
         self.search = search or build_search_provider()
@@ -54,8 +58,12 @@ class AutonomousLearner:
                 title=f"建立 {identity.initial_focus} 的基础系统地图",
                 description="识别核心子系统、关键概念、依赖关系、常见限制和后续学习路径。",
                 source=GoalSource.HUMAN,
-                importance=1.0, uncertainty=0.9, novelty=0.9, utility=1.0,
-                prerequisite_score=0.9, estimated_cost=0.4,
+                importance=1.0,
+                uncertainty=0.9,
+                novelty=0.9,
+                utility=1.0,
+                prerequisite_score=0.9,
+                estimated_cost=0.4,
             )
             await self.repo.add_goal(seed, goal_score(seed, self.cfg.learning.exploration_rate))
 
@@ -82,7 +90,8 @@ class AutonomousLearner:
 
         docs: list[SourceDocument] = []
         seen_urls: set[str] = set()
-        stored_sources = {}
+        seen_hashes: set[str] = set()
+        stored_sources: dict[str, models.Source] = {}
         for query in plan.queries:
             try:
                 hits = await self.search.search(query, limit=3)
@@ -91,15 +100,19 @@ class AutonomousLearner:
                 log.warning("Search failed for %r: %s", query, exc)
                 continue
             for hit in hits:
-                if hit.url in seen_urls or len(docs) >= self.cfg.learning.max_sources_per_goal:
+                hit_key = normalize_url(hit.url)
+                if hit_key in seen_urls or len(docs) >= self.cfg.learning.max_sources_per_goal:
                     continue
-                seen_urls.add(hit.url)
+                seen_urls.add(hit_key)
                 try:
                     doc = await self.reader.read(hit.url)
-                    docs.append(doc)
                     h = self.reader.hash_text(doc.text)
+                    if h in seen_hashes:
+                        continue
+                    seen_hashes.add(h)
+                    docs.append(doc)
                     db_source = await self.repo.upsert_source(doc, h)
-                    stored_sources[doc.url] = db_source
+                    stored_sources[normalize_url(doc.url)] = db_source
                 # A single unreadable source must not terminate the learning cycle.
                 except Exception as exc:  # noqa: BLE001
                     log.debug("Read failed %s: %s", hit.url, exc)
@@ -118,9 +131,17 @@ class AutonomousLearner:
         learned = await self.synthesizer.synthesize(goal.title, docs)
 
         claim_rows = []
+        seen_claim_ids = set()
         for draft in learned.claims:
-            source_ids = [str(stored_sources[u].id) for u in draft.source_urls if u in stored_sources]
-            claim_rows.append(await self.repo.add_claim(draft, learning_session.id, source_ids))
+            source_ids = [
+                str(stored_sources[key].id)
+                for url in draft.source_urls
+                if (key := normalize_url(url)) in stored_sources
+            ]
+            claim = await self.repo.add_claim(draft, learning_session.id, source_ids)
+            if claim.id not in seen_claim_ids:
+                claim_rows.append(claim)
+                seen_claim_ids.add(claim.id)
 
         # Conflict detection happens before belief promotion. New model output cannot overwrite old beliefs.
         old_beliefs = await self.repo.recent_beliefs(40)
@@ -128,10 +149,17 @@ class AutonomousLearner:
         disputed_claim_ids = set()
         for claim in claim_rows:
             for belief in old_beliefs:
+                if normalize_text_key(belief.statement) == normalize_text_key(claim.statement):
+                    continue
                 relation = await self.conflicts.compare(belief.statement, claim.statement)
-                if relation.relation == "contradicts" and relation.score >= self.cfg.learning.contradiction_threshold:
-                    await self.repo.create_dispute(belief, claim, relation.score, relation.explanation)
-                    disputes += 1
+                if (
+                    relation.relation == "contradicts"
+                    and relation.score >= self.cfg.learning.contradiction_threshold
+                ):
+                    _, created = await self.repo.get_or_create_dispute(
+                        belief, claim, relation.score, relation.explanation
+                    )
+                    disputes += int(created)
                     disputed_claim_ids.add(claim.id)
 
         await self.repo.update_goal_status(goal, GoalStatus.TESTING)
@@ -147,10 +175,23 @@ class AutonomousLearner:
         beliefs_promoted = 0
         if evaluation.passed:
             for claim in claim_rows:
+                source_by_id = {str(source.id): source for source in stored_sources.values()}
+                evidence_sources = [
+                    EvidenceSource(
+                        source_id=source_id,
+                        normalized_url=source_by_id[source_id].normalized_url or "",
+                        publisher_key=source_by_id[source_id].publisher_key or "",
+                        content_hash=source_by_id[source_id].content_hash or "",
+                        evidence_level=source_by_id[source_id].evidence_level,
+                        credibility_score=source_by_id[source_id].credibility_score,
+                    )
+                    for source_id in claim.source_ids
+                    if source_id in source_by_id
+                ]
                 decision = self.promotion.decide(
                     evaluation_passed=True,
-                    source_ids=claim.source_ids,
                     has_open_dispute=claim.id in disputed_claim_ids,
+                    sources=evidence_sources,
                 )
                 if not decision.promote:
                     log.info(
@@ -163,15 +204,20 @@ class AutonomousLearner:
                     claim,
                     evaluation.score,
                     decision.verified,
+                    evidence_score=decision.evidence_score,
+                    independent_source_count=decision.independent_source_count,
                 )
                 beliefs_promoted += 1
-                for source_id in claim.source_ids:
-                    for source in stored_sources.values():
-                        if str(source.id) == source_id:
-                            await self.repo.add_evidence(
-                                belief.id, source.id, source.evidence_level,
-                                strength=min(1.0, claim.confidence), excerpt=source.extracted_text or ""
-                            )
+                for source_id in dict.fromkeys(claim.source_ids):
+                    source = source_by_id.get(source_id)
+                    if source:
+                        await self.repo.add_evidence(
+                            belief.id,
+                            source.id,
+                            source.evidence_level,
+                            strength=min(1.0, claim.confidence),
+                            excerpt=source.extracted_text or "",
+                        )
             await self.repo.update_goal_status(goal, GoalStatus.PASSED, evaluation.score)
         else:
             await self.repo.update_goal_status(
@@ -183,28 +229,55 @@ class AutonomousLearner:
 
         follow_ups: list[CandidateGoal] = []
         for dep in learned.discovered_dependencies[:2]:
-            follow_ups.append(CandidateGoal(
-                title=f"补齐前置知识：{dep}", description=f"由目标“{goal.title}”发现的前置知识缺口。",
-                source=GoalSource.PREREQUISITE, importance=0.8, uncertainty=0.8,
-                novelty=0.7, utility=0.9, prerequisite_score=1.0, estimated_cost=0.45,
-            ))
+            follow_ups.append(
+                CandidateGoal(
+                    title=f"补齐前置知识：{dep}",
+                    description=f"由目标“{goal.title}”发现的前置知识缺口。",
+                    source=GoalSource.PREREQUISITE,
+                    importance=0.8,
+                    uncertainty=0.8,
+                    novelty=0.7,
+                    utility=0.9,
+                    prerequisite_score=1.0,
+                    estimated_cost=0.45,
+                )
+            )
         for q in learned.unanswered_questions[:2]:
-            follow_ups.append(CandidateGoal(
-                title=q, description=f"由目标“{goal.title}”产生的未解决问题。",
-                source=GoalSource.FOLLOW_UP, importance=0.65, uncertainty=0.9,
-                novelty=0.7, utility=0.7, prerequisite_score=0.6, estimated_cost=0.4,
-            ))
+            follow_ups.append(
+                CandidateGoal(
+                    title=q,
+                    description=f"由目标“{goal.title}”产生的未解决问题。",
+                    source=GoalSource.FOLLOW_UP,
+                    importance=0.65,
+                    uncertainty=0.9,
+                    novelty=0.7,
+                    utility=0.7,
+                    prerequisite_score=0.6,
+                    estimated_cost=0.4,
+                )
+            )
         for claim in claim_rows:
             if claim.id not in disputed_claim_ids:
                 continue
-            follow_ups.append(CandidateGoal(
-                title=f"调查争议主张：{claim.statement[:120]}",
-                description=f"主张在目标“{goal.title}”中与已有信念发生实质冲突，需要独立证据调查。",
-                source=GoalSource.CONFLICT, importance=0.9, uncertainty=1.0,
-                novelty=0.6, utility=0.9, prerequisite_score=0.8, estimated_cost=0.6,
-            ))
+            follow_ups.append(
+                CandidateGoal(
+                    title=f"调查争议主张：{claim.statement[:120]}",
+                    description=f"主张在目标“{goal.title}”中与已有信念发生实质冲突，需要独立证据调查。",
+                    source=GoalSource.CONFLICT,
+                    importance=0.9,
+                    uncertainty=1.0,
+                    novelty=0.6,
+                    utility=0.9,
+                    prerequisite_score=0.8,
+                    estimated_cost=0.6,
+                )
+            )
+        follow_up_goals_created = 0
         for fg in follow_ups[: self.cfg.learning.max_follow_up_goals_per_cycle]:
-            await self.repo.add_goal(fg, goal_score(fg, self.cfg.learning.exploration_rate), goal.id)
+            _, created = await self.repo.add_goal_if_absent(
+                fg, goal_score(fg, self.cfg.learning.exploration_rate), goal.id
+            )
+            follow_up_goals_created += int(created)
 
         return {
             "status": "passed" if evaluation.passed else "failed",
@@ -214,7 +287,7 @@ class AutonomousLearner:
             "claims": len(claim_rows),
             "beliefs_promoted": beliefs_promoted,
             "disputes_created": disputes,
-            "follow_up_goals": len(follow_ups),
+            "follow_up_goals": follow_up_goals_created,
         }
 
     async def run_daemon(self, max_cycles: int | None = None) -> None:

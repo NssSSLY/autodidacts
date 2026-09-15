@@ -36,6 +36,7 @@ class LearningConfig(BaseModel):
     max_sources_per_goal: int = 6
     max_chars_per_source: int = 18000
     min_independent_sources_for_verified_belief: int = 2
+    min_evidence_level_for_verified_belief: int = 2
     max_retry: int = 3
     pass_score: float = 0.82
     exploration_rate: float = 0.30

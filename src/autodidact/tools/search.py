@@ -8,6 +8,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from autodidact.config import RuntimeSettings, runtime_settings
+from autodidact.knowledge.sources import normalize_url
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,24 @@ class SearchHit:
     title: str
     url: str
     snippet: str = ""
+
+
+def deduplicate_search_hits(hits: list[SearchHit], limit: int) -> list[SearchHit]:
+    """Keep only safe HTTP(S) results with distinct normalized URLs."""
+    unique: list[SearchHit] = []
+    seen: set[str] = set()
+    for hit in hits:
+        normalized = normalize_url(hit.url)
+        parsed = urlparse(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(SearchHit(hit.title, normalized, hit.snippet))
+        if len(unique) >= limit:
+            break
+    return unique
 
 
 class SearchProvider(ABC):
@@ -60,9 +79,7 @@ class DuckDuckGoHtmlSearch(SearchProvider):
             snippet_element = result.select_one(".result__snippet")
             snippet = snippet_element.get_text(" ", strip=True) if snippet_element else ""
             hits.append(SearchHit(anchor.get_text(" ", strip=True), raw_url, snippet))
-            if len(hits) >= limit:
-                break
-        return hits
+        return deduplicate_search_hits(hits, limit)
 
 
 class BraveSearchProvider(SearchProvider):
@@ -116,9 +133,7 @@ class BraveSearchProvider(SearchProvider):
                     snippet=description if isinstance(description, str) else "",
                 )
             )
-            if len(hits) >= limit:
-                break
-        return hits
+        return deduplicate_search_hits(hits, limit)
 
 
 class FallbackSearchProvider(SearchProvider):

@@ -25,13 +25,17 @@ class Agent(Base):
     total_learning_hours: Mapped[float] = mapped_column(Float, default=0.0)
     cycle_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Goal(Base):
     __tablename__ = "goals"
     id: Mapped[UUID] = uuid_pk()
-    parent_goal_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("goals.id"))
+    parent_goal_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("goals.id")
+    )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -55,7 +59,9 @@ class Goal(Base):
 class LearningSession(Base):
     __tablename__ = "learning_sessions"
     id: Mapped[UUID] = uuid_pk()
-    goal_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("goals.id"), nullable=False)
+    goal_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("goals.id"), nullable=False
+    )
     plan: Mapped[dict] = mapped_column(JSONB, default=dict)
     result: Mapped[dict] = mapped_column(JSONB, default=dict)
     reflection: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -68,8 +74,12 @@ class Source(Base):
     __tablename__ = "sources"
     id: Mapped[UUID] = uuid_pk()
     url: Mapped[str | None] = mapped_column(Text)
+    normalized_url: Mapped[str | None] = mapped_column(Text, index=True)
+    publisher_key: Mapped[str | None] = mapped_column(String(255), index=True)
     title: Mapped[str | None] = mapped_column(Text)
     source_type: Mapped[str] = mapped_column(String(50), default="web")
+    quality_class: Mapped[str] = mapped_column(String(50), default="ordinary_web")
+    quality_reason: Mapped[str | None] = mapped_column(Text)
     author: Mapped[str | None] = mapped_column(Text)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     credibility_score: Mapped[float] = mapped_column(Float, default=0.3)
@@ -83,7 +93,9 @@ class Source(Base):
 class Claim(Base):
     __tablename__ = "claims"
     id: Mapped[UUID] = uuid_pk()
-    learning_session_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("learning_sessions.id"))
+    learning_session_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("learning_sessions.id")
+    )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     topic: Mapped[str | None] = mapped_column(Text)
     reasoning: Mapped[str | None] = mapped_column(Text)
@@ -107,16 +119,22 @@ class Belief(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
     last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Evidence(Base):
     __tablename__ = "evidence"
     id: Mapped[UUID] = uuid_pk()
-    belief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False)
+    belief_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False
+    )
     source_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sources.id"))
-    model_observation_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), ForeignKey("model_observations.id"))
+    model_observation_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("model_observations.id")
+    )
     kind: Mapped[str] = mapped_column(String(50), default="web_source")
     stance: Mapped[str] = mapped_column(String(20), default="support")
     evidence_level: Mapped[int] = mapped_column(Integer, default=1)
@@ -128,8 +146,12 @@ class Evidence(Base):
 class Dispute(Base):
     __tablename__ = "disputes"
     id: Mapped[UUID] = uuid_pk()
-    belief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False)
-    incoming_claim_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("claims.id"), nullable=False)
+    belief_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False
+    )
+    incoming_claim_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("claims.id"), nullable=False
+    )
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     contradiction_score: Mapped[float] = mapped_column(Float, nullable=False)
     resolution_notes: Mapped[str | None] = mapped_column(Text)
@@ -140,7 +162,9 @@ class Dispute(Base):
 class BeliefHistory(Base):
     __tablename__ = "belief_history"
     id: Mapped[UUID] = uuid_pk()
-    belief_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False)
+    belief_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("beliefs.id"), nullable=False
+    )
     action: Mapped[str] = mapped_column(String(50), nullable=False)
     previous_state: Mapped[dict] = mapped_column(JSONB, default=dict)
     new_state: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -160,14 +184,20 @@ class Skill(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Evaluation(Base):
     __tablename__ = "evaluations"
     id: Mapped[UUID] = uuid_pk()
-    goal_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("goals.id"), nullable=False)
-    learning_session_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("learning_sessions.id"), nullable=False)
+    goal_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("goals.id"), nullable=False
+    )
+    learning_session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("learning_sessions.id"), nullable=False
+    )
     score: Mapped[float] = mapped_column(Float, nullable=False)
     passed: Mapped[bool] = mapped_column(Boolean, nullable=False)
     components: Mapped[dict] = mapped_column(JSONB, default=dict)
@@ -199,4 +229,6 @@ class ModelProfile(Base):
     error_profile: Mapped[dict] = mapped_column(JSONB, default=dict)
     benchmark_score: Mapped[float | None] = mapped_column(Float)
     sample_count: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

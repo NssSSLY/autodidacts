@@ -13,11 +13,15 @@ class SearchQueryPlan(BaseModel):
 
 class SourceDocument(BaseModel):
     url: str
+    normalized_url: str = ""
+    publisher_key: str = ""
     title: str = ""
     text: str
     source_type: str = "web"
-    evidence_level: int = 1
-    credibility_score: float = 0.3
+    quality_class: str = "ordinary_web"
+    quality_reason: str = ""
+    evidence_level: int = Field(default=1, ge=0, le=5)
+    credibility_score: float = Field(default=0.3, ge=0, le=1)
 
 
 class ClaimDraft(BaseModel):

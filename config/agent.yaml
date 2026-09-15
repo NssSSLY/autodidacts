@@ -10,6 +10,7 @@ learning:
   max_sources_per_goal: 6
   max_chars_per_source: 18000
   min_independent_sources_for_verified_belief: 2
+  min_evidence_level_for_verified_belief: 2
   max_retry: 3
   pass_score: 0.82
   exploration_rate: 0.30
