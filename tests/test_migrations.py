@@ -10,6 +10,7 @@ from autodidact.migrations import (
     baseline_schema_columns,
     decide_initialization_action,
     expected_schema_columns,
+    source_provenance_schema_columns,
 )
 
 
@@ -30,6 +31,12 @@ def test_initial_migration_generates_offline_sql(capsys):
     assert "ADD COLUMN quality_class" in sql
     assert "CREATE TABLE model_observations" in sql
 
+    assert "CREATE TABLE claim_evidence" in sql
+    assert "ADD COLUMN statement_key" in sql
+    assert "uq_claims_session_statement_key_current" in sql
+    assert "uq_evidence_dedup_key_current" in sql
+    assert "uq_disputes_dedup_key_current" in sql
+
 
 def test_fresh_or_versioned_schema_uses_upgrade():
     assert decide_initialization_action({}) == "upgrade"
@@ -42,6 +49,13 @@ def test_current_create_all_schema_is_stamped_at_head():
 
 def test_baseline_create_all_schema_is_stamped_then_upgraded():
     assert decide_initialization_action(baseline_schema_columns()) == "stamp_then_upgrade"
+
+
+def test_source_provenance_schema_is_stamped_at_0002_then_upgraded():
+    assert (
+        decide_initialization_action(source_provenance_schema_columns())
+        == "stamp_source_provenance_then_upgrade"
+    )
 
 
 def test_partial_legacy_schema_is_rejected_to_protect_existing_state():

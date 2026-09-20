@@ -38,6 +38,15 @@ class FakeSession:
         return None
 
 
+class SequentialSession(FakeSession):
+    def __init__(self, result_sets):
+        super().__init__([])
+        self.result_sets = list(result_sets)
+
+    async def execute(self, _statement):
+        return Result(self.result_sets.pop(0))
+
+
 @pytest.mark.asyncio
 async def test_active_goal_title_is_deduplicated_after_text_normalization():
     existing = SimpleNamespace(title="调查  VIO 冲突", status=GoalStatus.DISCOVERED)
@@ -85,3 +94,18 @@ async def test_open_dispute_is_idempotent_and_does_not_rewrite_belief_history():
     assert created is False
     assert belief.status == BeliefStatus.VERIFIED
     assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_open_dispute_without_dedup_key_is_reused():
+    legacy_dispute = SimpleNamespace(status=DisputeStatus.UNRESOLVED, dedup_key=None)
+    session = SequentialSession([[], [legacy_dispute]])
+    repo = Repository(session)  # type: ignore[arg-type]
+    belief = SimpleNamespace(id=uuid4(), status=BeliefStatus.VERIFIED, confidence=0.9)
+    claim = SimpleNamespace(id=uuid4())
+
+    dispute, created = await repo.get_or_create_dispute(belief, claim, 0.95, "冲突")
+
+    assert dispute is legacy_dispute
+    assert created is False
+    assert belief.status == BeliefStatus.VERIFIED

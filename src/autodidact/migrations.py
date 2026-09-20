@@ -15,16 +15,25 @@ from autodidact import models  # noqa: F401
 from autodidact.config import runtime_settings
 from autodidact.db import Base
 
-HEAD_REVISION = "20260915_0002"
+HEAD_REVISION = "20260920_0003"
+SOURCE_PROVENANCE_REVISION = "20260915_0002"
 POST_BASELINE_COLUMNS = {
     "sources": {"normalized_url", "publisher_key", "quality_class", "quality_reason"},
 }
+POST_SOURCE_PROVENANCE_COLUMNS = {
+    "claims": {"statement_key"},
+    "evidence": {"dedup_key"},
+    "disputes": {"dedup_key", "previous_belief_state", "resolution_metadata"},
+}
+POST_SOURCE_PROVENANCE_TABLES = {"claim_evidence"}
 BASELINE_REVISION = "20260914_0001"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 
-MigrationAction = Literal["upgrade", "stamp_then_upgrade", "stamp_head"]
+MigrationAction = Literal[
+    "upgrade", "stamp_then_upgrade", "stamp_source_provenance_then_upgrade", "stamp_head"
+]
 
 
 def alembic_config() -> Config:
@@ -53,6 +62,18 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
+def source_provenance_schema_columns() -> dict[str, set[str]]:
+    source_provenance = {
+        table_name: set(column_names)
+        for table_name, column_names in expected_schema_columns().items()
+    }
+    for table_name, column_names in POST_SOURCE_PROVENANCE_COLUMNS.items():
+        source_provenance[table_name].difference_update(column_names)
+    for table_name in POST_SOURCE_PROVENANCE_TABLES:
+        source_provenance.pop(table_name)
+    return source_provenance
+
+
 def decide_initialization_action(
     existing_columns: Mapping[str, AbstractSet[str]],
 ) -> MigrationAction:
@@ -65,21 +86,29 @@ def decide_initialization_action(
     if not present_app_tables:
         return "upgrade"
 
-    missing_tables = set(expected) - set(existing_columns)
+    actual = {
+        table_name: set(columns)
+        for table_name, columns in existing_columns.items()
+        if table_name in expected
+    }
+    if actual == expected:
+        return "stamp_head"
+
+    source_provenance = source_provenance_schema_columns()
+    if actual == source_provenance:
+        return "stamp_source_provenance_then_upgrade"
+
+    baseline = baseline_schema_columns()
+    if actual == baseline:
+        return "stamp_then_upgrade"
+
+    missing_tables = set(expected) - set(actual)
     if missing_tables:
         names = ", ".join(sorted(missing_tables))
         raise RuntimeError(
             "检测到未受 Alembic 管理的不完整 Autodidact 数据库；"
             f"缺少数据表：{names}。为保护已有学习状态，已停止自动迁移。"
         )
-
-    actual = {table_name: set(existing_columns[table_name]) for table_name in expected}
-    if actual == expected:
-        return "stamp_head"
-
-    baseline = baseline_schema_columns()
-    if actual == baseline:
-        return "stamp_then_upgrade"
 
     mismatches: list[str] = []
     for table_name, expected_names in expected.items():
@@ -110,6 +139,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
     action = decide_initialization_action(_existing_columns(connection))
     if action == "stamp_then_upgrade":
         command.stamp(config, BASELINE_REVISION)
+    elif action == "stamp_source_provenance_then_upgrade":
+        command.stamp(config, SOURCE_PROVENANCE_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

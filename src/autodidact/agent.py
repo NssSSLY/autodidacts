@@ -8,9 +8,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from autodidact import models
 from autodidact.brain.llm import LLM
 from autodidact.config import agent_config
+from autodidact.embeddings import EmbeddingProvider, build_embedding_provider
 from autodidact.enums import GoalSource, GoalStatus
 from autodidact.goals.generator import GoalGenerator
 from autodidact.goals.scorer import goal_score
+from autodidact.knowledge.claim_support import ClaimSupportValidator
 from autodidact.knowledge.conflicts import ConflictDetector
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import EvidenceSource, normalize_url
@@ -33,9 +35,11 @@ class AutonomousLearner:
         session: AsyncSession,
         llm: LLM,
         search: SearchProvider | None = None,
+        embedding: EmbeddingProvider | None = None,
     ):
         self.repo = Repository(session)
         self.llm = llm
+        self.embedding = embedding or build_embedding_provider()
         self.planner = Planner(llm)
         self.synthesizer = Synthesizer(llm)
         self.evaluator = Evaluator(llm)
@@ -49,6 +53,17 @@ class AutonomousLearner:
         self.goal_generator = GoalGenerator(llm)
         self.search = search or build_search_provider()
         self.reader = WebReader()
+        self.claim_support = ClaimSupportValidator()
+
+    async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
+        try:
+            embedding = await self.embedding.embed(statement)
+            recalled = await self.repo.semantic_beliefs(embedding, 40)
+            if recalled:
+                return recalled
+        except Exception as exc:  # noqa: BLE001 - external embedding failures are degradable.
+            log.debug("Semantic recall unavailable; using recency fallback: %s", exc)
+        return await self.repo.recent_beliefs(40)
 
     async def bootstrap(self) -> None:
         identity = self.cfg.agent
@@ -133,21 +148,19 @@ class AutonomousLearner:
         claim_rows = []
         seen_claim_ids = set()
         for draft in learned.claims:
-            source_ids = [
-                str(stored_sources[key].id)
-                for url in draft.source_urls
-                if (key := normalize_url(url)) in stored_sources
-            ]
+            validation = self.claim_support.validate(draft, stored_sources)
+            source_ids = validation.anchored_source_ids
             claim = await self.repo.add_claim(draft, learning_session.id, source_ids)
+            await self.repo.record_claim_evidence(claim, validation.records)
             if claim.id not in seen_claim_ids:
                 claim_rows.append(claim)
                 seen_claim_ids.add(claim.id)
 
         # Conflict detection happens before belief promotion. New model output cannot overwrite old beliefs.
-        old_beliefs = await self.repo.recent_beliefs(40)
         disputes = 0
         disputed_claim_ids = set()
         for claim in claim_rows:
+            old_beliefs = await self._beliefs_for_claim(claim.statement)
             for belief in old_beliefs:
                 if normalize_text_key(belief.statement) == normalize_text_key(claim.statement):
                     continue
@@ -207,6 +220,11 @@ class AutonomousLearner:
                     evidence_score=decision.evidence_score,
                     independent_source_count=decision.independent_source_count,
                 )
+                try:
+                    vector = await self.embedding.embed(belief.statement)
+                    await self.repo.set_belief_embedding(belief, vector)
+                except Exception as exc:  # noqa: BLE001 - promotion must not depend on embeddings.
+                    log.debug("Belief embedding was not persisted: %s", exc)
                 beliefs_promoted += 1
                 for source_id in dict.fromkeys(claim.source_ids):
                     source = source_by_id.get(source_id)
@@ -286,6 +304,7 @@ class AutonomousLearner:
             "sources": len(docs),
             "claims": len(claim_rows),
             "beliefs_promoted": beliefs_promoted,
+            "claims_with_anchored_evidence": sum(bool(claim.source_ids) for claim in claim_rows),
             "disputes_created": disputes,
             "follow_up_goals": follow_up_goals_created,
         }

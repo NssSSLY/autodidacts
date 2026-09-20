@@ -4,7 +4,17 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -97,10 +107,30 @@ class Claim(Base):
         PGUUID(as_uuid=True), ForeignKey("learning_sessions.id")
     )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
+    statement_key: Mapped[str | None] = mapped_column(String(64), index=True)
     topic: Mapped[str | None] = mapped_column(Text)
     reasoning: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     source_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+    __table_args__ = (
+        UniqueConstraint("claim_id", "source_id", "excerpt_hash", name="uq_claim_evidence_anchor"),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    claim_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("claims.id"), nullable=False
+    )
+    source_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("sources.id"), nullable=False
+    )
+    excerpt: Mapped[str] = mapped_column(Text, nullable=False)
+    excerpt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -138,6 +168,7 @@ class Evidence(Base):
     kind: Mapped[str] = mapped_column(String(50), default="web_source")
     stance: Mapped[str] = mapped_column(String(20), default="support")
     evidence_level: Mapped[int] = mapped_column(Integer, default=1)
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     strength: Mapped[float] = mapped_column(Float, default=0.5)
     excerpt: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -152,6 +183,9 @@ class Dispute(Base):
     incoming_claim_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("claims.id"), nullable=False
     )
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    previous_belief_state: Mapped[dict] = mapped_column(JSONB, default=dict)
+    resolution_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     contradiction_score: Mapped[float] = mapped_column(Float, nullable=False)
     resolution_notes: Mapped[str | None] = mapped_column(Text)

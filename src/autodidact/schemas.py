@@ -30,6 +30,12 @@ class ClaimDraft(BaseModel):
     reasoning: str = ""
     confidence: float = Field(ge=0, le=1)
     source_urls: list[str] = Field(default_factory=list)
+    citations: list[ClaimCitation] = Field(default_factory=list)
+
+
+class ClaimCitation(BaseModel):
+    source_url: str
+    excerpt: str = Field(min_length=1, max_length=2000)
 
 
 class LearningResult(BaseModel):
@@ -69,6 +75,14 @@ class ContradictionResult(BaseModel):
     relation: Literal["supports", "contradicts", "unrelated", "conditional"]
     score: float = Field(ge=0, le=1)
     explanation: str = ""
+
+
+class DisputeResolutionProposal(BaseModel):
+    outcome: Literal["keep_old", "adopt_new", "conditional", "unresolved"]
+    rationale: str = Field(min_length=1, max_length=4000)
+    evidence_source_ids: list[str] = Field(default_factory=list)
+    conditional_statement: str = ""
+    conditions: list[str] = Field(default_factory=list)
 
 
 class ReflectionResult(BaseModel):

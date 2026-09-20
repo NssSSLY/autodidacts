@@ -61,7 +61,7 @@ autodidact init-db
 autodidact bootstrap
 ```
 
-`autodidact init-db` 会使用 Alembic 将数据库升级到最新结构。对于早期由 `create_all` 创建的数据库，系统会先核对核心表与字段，完全匹配 V0.1 基线后才无损标记迁移版本；检测到不完整或不一致的旧结构时会停止，避免覆盖已有学习状态。
+`autodidact init-db` 会使用 Alembic 将数据库升级到最新结构。对于早期由 `create_all` 创建的数据库，系统会先核对核心表与字段；完全匹配 V0.1 基线或来源元数据版本时才无损标记对应版本再升级。检测到不完整或不一致的旧结构时会停止，避免覆盖已有学习状态。
 
 初始 `.env` 使用 `LLM_PROVIDER=mock`。这能让初始化和测试正常工作，但不会执行有实际价值的研究。第一次运行真实学习循环之前，请配置真实模型：
 
@@ -74,6 +74,17 @@ LLM_MODEL=YOUR_MODEL_NAME
 
 适配器预期服务提供常见的 `/chat/completions` 兼容端点。如果某个提供方的接口不同，应实现另一个 `LLM` 子类，而不是修改智能体循环。
 
+
+语义信念召回默认关闭，不要求额外密钥；关闭或嵌入服务失败时，系统会安全回退到最近信念。若要启用与 OpenAI 兼容的嵌入端点，请配置一个**输出 1536 维向量**的模型：
+
+```env
+EMBEDDING_PROVIDER=openai_compatible
+EMBEDDING_BASE_URL=https://YOUR_PROVIDER_BASE_URL/v1
+EMBEDDING_API_KEY=YOUR_KEY
+EMBEDDING_MODEL=YOUR_1536_DIMENSION_EMBEDDING_MODEL
+```
+
+迁移会建立 `pgvector` 的 HNSW 余弦索引；首次使用前需确保 PostgreSQL 已安装并允许 `vector` 扩展。向量只用于候选信念召回，后续冲突判断仍是待验证的模型观察，不能直接改变信念状态。
 搜索层默认使用 `SEARCH_PROVIDER=auto`。配置 `BRAVE_SEARCH_API_KEY` 后，系统优先调用 Brave Search API，并在请求失败或没有结果时自动回退到 DuckDuckGo HTML；未配置密钥时直接使用无密钥后备搜索。也可以显式设置 `SEARCH_PROVIDER=brave` 或 `SEARCH_PROVIDER=duckduckgo`。
 
 运行一个学习循环：
@@ -108,7 +119,7 @@ autodidact benchmark data/benchmark/sample.json
    -> 检索认识论上下文
    -> 规划搜索，包括失败案例和反例查询
    -> 搜索去重并读取不受信任的网页，记录规范 URL、发布者和质量初筛
-   -> 综合为关联来源的主张
+   -> 综合候选主张和原文摘录，并逐字验证摘录确实存在于已读取原文
    -> 将每条主张与已有信念比较
        -> 出现矛盾 => 创建争议
    -> 评估事实性、推理、迁移能力和校准度
@@ -117,9 +128,9 @@ autodidact benchmark data/benchmark/sample.json
    -> 未回答问题或前置依赖 => 新目标
 ```
 
-存在未解决争议或没有可追溯来源的主张不会晋升为信念。同一发布者的多个页面、正文完全相同的镜像页面只计为一个独立证据组；只有达到 `min_evidence_level_for_verified_belief` 的独立来源才参与 `VERIFIED` 判定，普通低等级网页最多支持临时信念。
+没有经过原文逐字锚定的来源不会进入 Claim 的 `source_ids`，因此不能支持晋升。存在未解决争议或没有可追溯来源的主张不会晋升为信念。同一发布者的多个页面、正文完全相同的镜像页面只计为一个独立证据组；只有达到 `min_evidence_level_for_verified_belief` 的独立来源才参与 `VERIFIED` 判定，普通低等级网页最多支持临时信念。
 
-活动目标、同一学习会话中的等价 Claim、重复证据和同一 Claim/Belief 对应的未结 Dispute 会幂等复用。失败目标最多重试 `max_retry` 次，达到上限后进入 `BLOCKED`，避免长期占据目标队首。
+活动目标、同一学习会话中的等价 Claim、重复证据和同一 Claim/Belief 对应的 Dispute 会幂等复用。新记录由数据库部分唯一索引保护，并在竞争写入时读取已创建记录；旧学习记录不回填幂等键，保持原样。失败目标最多重试 `max_retry` 次，达到上限后进入 `BLOCKED`，避免长期占据目标队首。
 
 ## 为什么更换模型不会抹除学习成果
 
@@ -145,9 +156,9 @@ autodidact benchmark data/benchmark/sample.json
 ## 当前 V0.1 的限制（有意保留）
 
 - Brave Search API 需要自行申请并配置密钥；DuckDuckGo HTML 仅作为无密钥后备方案。
-- 向量字段已经存在，但嵌入生成与检索留待下一阶段实现。
+- 语义召回目前仅索引信念，尚未实现主张、目标的混合检索与重排。
 - 评估器由模型辅助完成；V0.2 应更严格地分离问题生成、闭卷回答和来源验证。
-- 系统能够创建争议，但还不能完整地自动解决争议。
+- `DisputeResolver` 已实现四种可审计结果，但仍需独立的争议调查工作流来生成高质量决议提案。
 - 每个网站的浏览器对话选择器都需要单独维护。
 - 自主循环未开放 shell、文件删除、登录或支付能力。
 

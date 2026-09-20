@@ -4,12 +4,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import desc, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autodidact import models
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
+from autodidact.knowledge.claim_support import ClaimEvidenceVerification
 from autodidact.knowledge.sources import normalize_url, publisher_key
-from autodidact.normalization import normalize_text_key
+from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
 from autodidact.schemas import CandidateGoal, ClaimDraft, SourceDocument
 
 _ACTIVE_GOAL_STATUSES = (
@@ -177,23 +179,69 @@ class Repository:
         q = await self.s.execute(
             select(models.Claim).where(models.Claim.learning_session_id == learning_session_id)
         )
-        statement_key = normalize_text_key(draft.statement)
+        normalized_statement = normalize_text_key(draft.statement)
         for existing in q.scalars():
-            if normalize_text_key(existing.statement) == statement_key:
+            if normalize_text_key(existing.statement) == normalized_statement:
                 return existing
 
+        statement_key = claim_statement_key(draft.statement)
         item = models.Claim(
             learning_session_id=learning_session_id,
             statement=draft.statement,
             topic=draft.topic,
+            statement_key=statement_key,
             reasoning=draft.reasoning,
             confidence=draft.confidence,
             source_ids=list(dict.fromkeys(source_ids)),
         )
         self.s.add(item)
-        await self.s.commit()
+        try:
+            await self.s.commit()
+        except IntegrityError:
+            await self.s.rollback()
+            q = await self.s.execute(
+                select(models.Claim).where(
+                    models.Claim.learning_session_id == learning_session_id,
+                    models.Claim.statement_key == statement_key,
+                )
+            )
+            existing = q.scalar_one_or_none()
+            if existing:
+                return existing
+            raise
         await self.s.refresh(item)
         return item
+
+    async def record_claim_evidence(
+        self, claim: models.Claim, records: list[ClaimEvidenceVerification]
+    ) -> None:
+        for record in records:
+            if record.source_id is None:
+                continue
+            source_id = UUID(record.source_id)
+            q = await self.s.execute(
+                select(models.ClaimEvidence).where(
+                    models.ClaimEvidence.claim_id == claim.id,
+                    models.ClaimEvidence.source_id == source_id,
+                    models.ClaimEvidence.excerpt_hash == record.excerpt_hash,
+                )
+            )
+            if q.scalar_one_or_none():
+                continue
+            self.s.add(
+                models.ClaimEvidence(
+                    claim_id=claim.id,
+                    source_id=source_id,
+                    excerpt=record.excerpt,
+                    excerpt_hash=record.excerpt_hash,
+                    status=record.status,
+                    reason=record.reason,
+                )
+            )
+            try:
+                await self.s.commit()
+            except IntegrityError:
+                await self.s.rollback()
 
     async def recent_beliefs(self, limit: int = 30) -> list[models.Belief]:
         q = await self.s.execute(
@@ -203,6 +251,23 @@ class Repository:
             .limit(limit)
         )
         return list(q.scalars())
+
+    async def semantic_beliefs(
+        self, embedding: list[float], limit: int = 30
+    ) -> list[models.Belief]:
+        distance = models.Belief.embedding.cosine_distance(embedding)
+        q = await self.s.execute(
+            select(models.Belief)
+            .where(models.Belief.status != BeliefStatus.RETRACTED)
+            .where(models.Belief.embedding.is_not(None))
+            .order_by(distance)
+            .limit(limit)
+        )
+        return list(q.scalars())
+
+    async def set_belief_embedding(self, belief: models.Belief, embedding: list[float]) -> None:
+        belief.embedding = embedding
+        await self.s.commit()
 
     async def beliefs_for_topic(self, topic: str, limit: int = 10) -> list[models.Belief]:
         q = await self.s.execute(
@@ -277,6 +342,13 @@ class Repository:
     async def add_evidence(
         self, belief_id: UUID, source_id: UUID, level: int, strength: float, excerpt: str = ""
     ) -> None:
+        dedup_key = stable_key("evidence", belief_id, source_id, "web_source", "support")
+        q = await self.s.execute(
+            select(models.Evidence).where(models.Evidence.dedup_key == dedup_key)
+        )
+        if q.scalar_one_or_none():
+            return
+        # Rows created before 0003 keep a NULL dedup_key; preserve their idempotency too.
         q = await self.s.execute(
             select(models.Evidence).where(
                 models.Evidence.belief_id == belief_id,
@@ -293,12 +365,29 @@ class Repository:
                 source_id=source_id,
                 kind="web_source",
                 stance="support",
+                dedup_key=dedup_key,
                 evidence_level=level,
                 strength=strength,
                 excerpt=excerpt[:1500],
             )
         )
-        await self.s.commit()
+        try:
+            await self.s.commit()
+        except IntegrityError:
+            await self.s.rollback()
+
+    @staticmethod
+    def _belief_snapshot(belief: models.Belief) -> dict:
+        return {
+            "status": str(belief.status),
+            "statement": belief.statement,
+            "explanation": belief.explanation,
+            "confidence": belief.confidence,
+            "evidence_score": belief.evidence_score,
+            "test_score": belief.test_score,
+            "stability_score": belief.stability_score,
+            "source_count": belief.source_count,
+        }
 
     async def create_dispute(
         self, belief: models.Belief, claim: models.Claim, score: float, explanation: str
@@ -313,6 +402,15 @@ class Repository:
         score: float,
         explanation: str,
     ) -> tuple[models.Dispute, bool]:
+        dedup_key = stable_key("dispute", belief.id, claim.id)
+        q = await self.s.execute(
+            select(models.Dispute).where(models.Dispute.dedup_key == dedup_key)
+        )
+        existing = q.scalar_one_or_none()
+        if existing:
+            return existing, False
+        # The migration deliberately does not backfill legacy rows, so retain the
+        # former open-dispute lookup as a compatibility fallback.
         q = await self.s.execute(
             select(models.Dispute).where(
                 models.Dispute.belief_id == belief.id,
@@ -324,11 +422,13 @@ class Repository:
         if existing:
             return existing, False
 
-        previous_status = belief.status
+        previous_state = self._belief_snapshot(belief)
         belief.status = BeliefStatus.DISPUTED
         item = models.Dispute(
             belief_id=belief.id,
             incoming_claim_id=claim.id,
+            dedup_key=dedup_key,
+            previous_belief_state=previous_state,
             status=DisputeStatus.UNRESOLVED,
             contradiction_score=score,
             resolution_notes=explanation,
@@ -338,14 +438,128 @@ class Repository:
             models.BeliefHistory(
                 belief_id=belief.id,
                 action="disputed",
-                previous_state={"status": previous_status, "confidence": belief.confidence},
-                new_state={"status": BeliefStatus.DISPUTED},
+                previous_state=previous_state,
+                new_state={"status": str(BeliefStatus.DISPUTED)},
                 reason=explanation,
             )
         )
-        await self.s.commit()
+        try:
+            await self.s.commit()
+        except IntegrityError:
+            await self.s.rollback()
+            q = await self.s.execute(
+                select(models.Dispute).where(models.Dispute.dedup_key == dedup_key)
+            )
+            existing = q.scalar_one_or_none()
+            if existing:
+                return existing, False
+            raise
         await self.s.refresh(item)
         return item, True
+
+    async def apply_dispute_resolution(
+        self,
+        dispute: models.Dispute,
+        belief: models.Belief,
+        claim: models.Claim,
+        *,
+        outcome: str,
+        rationale: str,
+        conditional_statement: str,
+        conditions: list[str],
+        evidence_source_ids: list[str],
+    ) -> models.Belief:
+        if outcome not in {"keep_old", "adopt_new", "conditional", "unresolved"}:
+            raise ValueError(f"unsupported dispute outcome: {outcome}")
+
+        previous_state = self._belief_snapshot(belief)
+        resolved_belief = belief
+        status_by_outcome = {
+            "keep_old": DisputeStatus.RESOLVED_OLD,
+            "adopt_new": DisputeStatus.RESOLVED_NEW,
+            "conditional": DisputeStatus.RESOLVED_CONDITIONAL,
+            "unresolved": DisputeStatus.UNRESOLVED,
+        }
+        if outcome == "keep_old":
+            prior_status = dispute.previous_belief_state.get("status")
+            if not prior_status:
+                raise ValueError("cannot restore a belief without a preserved prior state")
+            belief.status = BeliefStatus(prior_status)
+        elif outcome == "adopt_new":
+            belief.status = BeliefStatus.RETRACTED
+            resolved_belief = models.Belief(
+                topic=claim.topic or belief.topic,
+                statement=claim.statement,
+                explanation=claim.reasoning,
+                status=BeliefStatus.SUPPORTED,
+                confidence=claim.confidence,
+                evidence_score=claim.confidence,
+                test_score=belief.test_score,
+                stability_score=0.2,
+                source_count=len(set(evidence_source_ids)),
+            )
+            self.s.add(resolved_belief)
+        elif outcome == "conditional":
+            belief.status = BeliefStatus.WEAKENED
+            resolved_belief = models.Belief(
+                topic=claim.topic or belief.topic,
+                statement=conditional_statement,
+                explanation=claim.reasoning,
+                status=BeliefStatus.SUPPORTED,
+                confidence=claim.confidence,
+                evidence_score=claim.confidence,
+                test_score=belief.test_score,
+                stability_score=0.15,
+                source_count=len(set(evidence_source_ids)),
+                metadata_json={"conditions": conditions, "resolved_from_dispute": str(dispute.id)},
+            )
+            self.s.add(resolved_belief)
+        else:
+            belief.status = BeliefStatus.UNRESOLVED
+
+        dispute.status = status_by_outcome[outcome]
+        dispute.resolution_notes = rationale
+        dispute.resolution_metadata = {
+            "outcome": outcome,
+            "conditions": conditions,
+            "evidence_source_ids": list(dict.fromkeys(evidence_source_ids)),
+        }
+        dispute.resolved_at = None if outcome == "unresolved" else datetime.now(UTC)
+        self.s.add(
+            models.BeliefHistory(
+                belief_id=belief.id,
+                action="dispute_resolved",
+                previous_state=previous_state,
+                new_state=self._belief_snapshot(belief),
+                reason=rationale,
+            )
+        )
+        await self.s.commit()
+        await self.s.refresh(dispute)
+        if resolved_belief is not belief:
+            await self.s.refresh(resolved_belief)
+            for source_id in dict.fromkeys(evidence_source_ids):
+                source = await self.s.get(models.Source, UUID(source_id))
+                if source is None:
+                    continue
+                await self.add_evidence(
+                    resolved_belief.id,
+                    UUID(source_id),
+                    level=source.evidence_level,
+                    strength=min(1.0, claim.confidence),
+                    excerpt="",
+                )
+            self.s.add(
+                models.BeliefHistory(
+                    belief_id=resolved_belief.id,
+                    action="created_from_dispute_resolution",
+                    previous_state={},
+                    new_state=self._belief_snapshot(resolved_belief),
+                    reason=rationale,
+                )
+            )
+            await self.s.commit()
+        return resolved_belief
 
     async def save_evaluation(
         self, goal_id: UUID, learning_session_id: UUID, result

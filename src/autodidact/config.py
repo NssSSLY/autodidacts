@@ -16,6 +16,10 @@ class RuntimeSettings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_temperature: float = 0.2
+    embedding_provider: str = "disabled"
+    embedding_base_url: str = "https://api.openai.com/v1"
+    embedding_api_key: str = ""
+    embedding_model: str = ""
     search_provider: str = "auto"
     brave_search_api_key: str = ""
     brave_search_base_url: str = "https://api.search.brave.com/res/v1/web/search"
@@ -37,6 +41,7 @@ class LearningConfig(BaseModel):
     max_chars_per_source: int = 18000
     min_independent_sources_for_verified_belief: int = 2
     min_evidence_level_for_verified_belief: int = 2
+    min_independent_sources_for_dispute_resolution: int = 2
     max_retry: int = 3
     pass_score: float = 0.82
     exploration_rate: float = 0.30
