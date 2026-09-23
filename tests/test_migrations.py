@@ -51,6 +51,17 @@ def test_baseline_create_all_schema_is_stamped_then_upgraded():
     assert decide_initialization_action(baseline_schema_columns()) == "stamp_then_upgrade"
 
 
+def test_legacy_schemas_match_the_columns_introduced_at_each_revision():
+    baseline = baseline_schema_columns()
+    provenance = source_provenance_schema_columns()
+    assert "claim_evidence" not in baseline
+    assert "claim_evidence" not in provenance
+    assert "statement_key" not in baseline["claims"]
+    assert "statement_key" not in provenance["claims"]
+    assert "normalized_url" not in baseline["sources"]
+    assert "normalized_url" in provenance["sources"]
+
+
 def test_source_provenance_schema_is_stamped_at_0002_then_upgraded():
     assert (
         decide_initialization_action(source_provenance_schema_columns())

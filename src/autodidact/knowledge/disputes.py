@@ -13,6 +13,15 @@ class DisputeRecord(Protocol):
 
 
 class DisputeRepository(Protocol):
+    async def qualified_resolution_sources(
+        self,
+        dispute: object,
+        belief: object,
+        claim: object,
+        outcome: str,
+        requested_source_ids: list[str],
+    ) -> list[EvidenceSource]: ...
+
     async def apply_dispute_resolution(
         self,
         dispute: object,
@@ -36,6 +45,7 @@ class ResolutionDecision:
     allowed: bool
     reason: str
     independent_source_count: int
+    qualified_source_ids: tuple[str, ...] = ()
 
 
 class DisputeResolutionPolicy:
@@ -59,6 +69,8 @@ class DisputeResolutionPolicy:
             return ResolutionDecision("keep_old", False, "missing_prior_belief_state", 0)
         if proposal.outcome == "conditional" and not proposal.conditional_statement.strip():
             return ResolutionDecision("conditional", False, "missing_conditional_statement", 0)
+        if proposal.outcome == "conditional" and not proposal.conditions:
+            return ResolutionDecision("conditional", False, "missing_conditions", 0)
 
         requested = set(proposal.evidence_source_ids)
         eligible = [
@@ -74,7 +86,13 @@ class DisputeResolutionPolicy:
                 "insufficient_independent_anchored_evidence",
                 len(independent),
             )
-        return ResolutionDecision(proposal.outcome, True, "qualified", len(independent))
+        return ResolutionDecision(
+            proposal.outcome,
+            True,
+            "qualified",
+            len(independent),
+            tuple(source.source_id for source in independent),
+        )
 
 
 class DisputeResolver:
@@ -90,10 +108,13 @@ class DisputeResolver:
         belief: object,
         claim: object,
         proposal: DisputeResolutionProposal,
-        sources: list[EvidenceSource],
-        anchored_source_ids: set[str],
     ) -> ResolutionDecision:
-        decision = self.policy.decide(dispute, proposal, sources, anchored_source_ids)
+        sources = await self.repository.qualified_resolution_sources(
+            dispute, belief, claim, proposal.outcome, proposal.evidence_source_ids
+        )
+        decision = self.policy.decide(
+            dispute, proposal, sources, {source.source_id for source in sources}
+        )
         if not decision.allowed:
             return decision
         await self.repository.apply_dispute_resolution(
@@ -104,7 +125,7 @@ class DisputeResolver:
             rationale=proposal.rationale,
             conditional_statement=proposal.conditional_statement,
             conditions=proposal.conditions,
-            evidence_source_ids=proposal.evidence_source_ids,
+            evidence_source_ids=list(decision.qualified_source_ids),
         )
         return decision
 

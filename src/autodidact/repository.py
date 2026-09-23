@@ -8,9 +8,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autodidact import models
+from autodidact.config import agent_config
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
 from autodidact.knowledge.claim_support import ClaimEvidenceVerification
-from autodidact.knowledge.sources import normalize_url, publisher_key
+from autodidact.knowledge.sources import (
+    EvidenceSource,
+    independent_source_representatives,
+    normalize_url,
+    publisher_key,
+)
 from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
 from autodidact.schemas import CandidateGoal, ClaimDraft, SourceDocument
 
@@ -28,6 +34,22 @@ _OPEN_DISPUTE_STATUSES = (
     DisputeStatus.INVESTIGATING,
     DisputeStatus.UNRESOLVED,
 )
+
+
+def _expected_unique_violation(exc: IntegrityError, constraint: str) -> bool:
+    """Only a known unique race is safe to treat as an existing row."""
+    original = getattr(exc, "orig", None)
+    # SQLAlchemy's asyncpg adapter wraps the server error and leaves the
+    # constraint name on the underlying asyncpg exception.
+    server_error = getattr(original, "__cause__", None)
+    return (
+        getattr(original, "sqlstate", None) == "23505"
+        and (
+            getattr(original, "constraint_name", None)
+            or getattr(server_error, "constraint_name", None)
+        )
+        == constraint
+    )
 
 
 class Repository:
@@ -197,8 +219,10 @@ class Repository:
         self.s.add(item)
         try:
             await self.s.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await self.s.rollback()
+            if not _expected_unique_violation(exc, "uq_claims_session_statement_key_current"):
+                raise
             q = await self.s.execute(
                 select(models.Claim).where(
                     models.Claim.learning_session_id == learning_session_id,
@@ -226,7 +250,12 @@ class Repository:
                     models.ClaimEvidence.excerpt_hash == record.excerpt_hash,
                 )
             )
-            if q.scalar_one_or_none():
+            existing = q.scalar_one_or_none()
+            if existing:
+                if existing.status != record.status or existing.reason != record.reason:
+                    existing.status = record.status
+                    existing.reason = record.reason
+                    await self.s.commit()
                 continue
             self.s.add(
                 models.ClaimEvidence(
@@ -240,8 +269,20 @@ class Repository:
             )
             try:
                 await self.s.commit()
-            except IntegrityError:
+            except IntegrityError as exc:
                 await self.s.rollback()
+                if not _expected_unique_violation(exc, "uq_claim_evidence_anchor"):
+                    raise
+        q = await self.s.execute(
+            select(models.ClaimEvidence).where(models.ClaimEvidence.claim_id == claim.id)
+        )
+        statuses: dict[str, set[str]] = {}
+        for evidence in q.scalars():
+            statuses.setdefault(str(evidence.source_id), set()).add(evidence.status)
+        qualified = [source_id for source_id, values in statuses.items() if values == {"supported"}]
+        if claim.source_ids != qualified:
+            claim.source_ids = qualified
+            await self.s.commit()
 
     async def recent_beliefs(self, limit: int = 30) -> list[models.Belief]:
         q = await self.s.execute(
@@ -373,8 +414,10 @@ class Repository:
         )
         try:
             await self.s.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await self.s.rollback()
+            if not _expected_unique_violation(exc, "uq_evidence_dedup_key_current"):
+                raise
 
     @staticmethod
     def _belief_snapshot(belief: models.Belief) -> dict:
@@ -445,8 +488,10 @@ class Repository:
         )
         try:
             await self.s.commit()
-        except IntegrityError:
+        except IntegrityError as exc:
             await self.s.rollback()
+            if not _expected_unique_violation(exc, "uq_disputes_dedup_key_current"):
+                raise
             q = await self.s.execute(
                 select(models.Dispute).where(models.Dispute.dedup_key == dedup_key)
             )
@@ -456,6 +501,72 @@ class Repository:
             raise
         await self.s.refresh(item)
         return item, True
+
+    async def qualified_resolution_sources(
+        self,
+        dispute: models.Dispute,
+        belief: models.Belief,
+        claim: models.Claim,
+        outcome: str,
+        requested_source_ids: list[str],
+    ) -> list[EvidenceSource]:
+        """Fetch source links for the proposition the proposed outcome changes."""
+        if dispute.belief_id != belief.id or dispute.incoming_claim_id != claim.id:
+            raise ValueError("dispute, belief and claim do not belong together")
+        if outcome == "unresolved":
+            return []
+        if outcome not in {"keep_old", "adopt_new", "conditional"}:
+            raise ValueError(f"unsupported dispute outcome: {outcome}")
+        requested = set(requested_source_ids)
+        if not requested:
+            return []
+
+        if outcome == "keep_old":
+            supported_claims = await self.s.execute(
+                select(models.Claim.id).where(models.Claim.statement == belief.statement)
+            )
+            claim_ids = list(supported_claims.scalars())
+            if not claim_ids:
+                return []
+            linked_evidence = await self.s.execute(
+                select(models.Evidence.source_id).where(
+                    models.Evidence.belief_id == belief.id,
+                    models.Evidence.stance == "support",
+                    models.Evidence.source_id.is_not(None),
+                )
+            )
+            linked_ids = set(linked_evidence.scalars())
+            accepted_status = "supported"
+        else:
+            claim_ids = [claim.id]
+            linked_ids = None
+            accepted_status = "supported"
+
+        result = await self.s.execute(
+            select(models.ClaimEvidence).where(
+                models.ClaimEvidence.claim_id.in_(claim_ids),
+                models.ClaimEvidence.status == accepted_status,
+            )
+        )
+        found: dict[str, EvidenceSource] = {}
+        for record in result.scalars():
+            source_id = str(record.source_id)
+            if source_id not in requested or (
+                linked_ids is not None and record.source_id not in linked_ids
+            ):
+                continue
+            source = await self.s.get(models.Source, record.source_id)
+            if source is None or source.evidence_level <= 0:
+                continue
+            found[source_id] = EvidenceSource(
+                source_id=source_id,
+                normalized_url=source.normalized_url or "",
+                publisher_key=source.publisher_key or "",
+                content_hash=source.content_hash or "",
+                evidence_level=source.evidence_level,
+                credibility_score=source.credibility_score,
+            )
+        return list(found.values())
 
     async def apply_dispute_resolution(
         self,
@@ -472,94 +583,144 @@ class Repository:
         if outcome not in {"keep_old", "adopt_new", "conditional", "unresolved"}:
             raise ValueError(f"unsupported dispute outcome: {outcome}")
 
-        previous_state = self._belief_snapshot(belief)
-        resolved_belief = belief
-        status_by_outcome = {
-            "keep_old": DisputeStatus.RESOLVED_OLD,
-            "adopt_new": DisputeStatus.RESOLVED_NEW,
-            "conditional": DisputeStatus.RESOLVED_CONDITIONAL,
-            "unresolved": DisputeStatus.UNRESOLVED,
-        }
-        if outcome == "keep_old":
-            prior_status = dispute.previous_belief_state.get("status")
-            if not prior_status:
-                raise ValueError("cannot restore a belief without a preserved prior state")
-            belief.status = BeliefStatus(prior_status)
-        elif outcome == "adopt_new":
-            belief.status = BeliefStatus.RETRACTED
-            resolved_belief = models.Belief(
-                topic=claim.topic or belief.topic,
-                statement=claim.statement,
-                explanation=claim.reasoning,
-                status=BeliefStatus.SUPPORTED,
-                confidence=claim.confidence,
-                evidence_score=claim.confidence,
-                test_score=belief.test_score,
-                stability_score=0.2,
-                source_count=len(set(evidence_source_ids)),
+        try:
+            locked = await self.s.execute(
+                select(models.Dispute).where(models.Dispute.id == dispute.id).with_for_update()
             )
-            self.s.add(resolved_belief)
-        elif outcome == "conditional":
-            belief.status = BeliefStatus.WEAKENED
-            resolved_belief = models.Belief(
-                topic=claim.topic or belief.topic,
-                statement=conditional_statement,
-                explanation=claim.reasoning,
-                status=BeliefStatus.SUPPORTED,
-                confidence=claim.confidence,
-                evidence_score=claim.confidence,
-                test_score=belief.test_score,
-                stability_score=0.15,
-                source_count=len(set(evidence_source_ids)),
-                metadata_json={"conditions": conditions, "resolved_from_dispute": str(dispute.id)},
-            )
-            self.s.add(resolved_belief)
-        else:
-            belief.status = BeliefStatus.UNRESOLVED
-
-        dispute.status = status_by_outcome[outcome]
-        dispute.resolution_notes = rationale
-        dispute.resolution_metadata = {
-            "outcome": outcome,
-            "conditions": conditions,
-            "evidence_source_ids": list(dict.fromkeys(evidence_source_ids)),
-        }
-        dispute.resolved_at = None if outcome == "unresolved" else datetime.now(UTC)
-        self.s.add(
-            models.BeliefHistory(
-                belief_id=belief.id,
-                action="dispute_resolved",
-                previous_state=previous_state,
-                new_state=self._belief_snapshot(belief),
-                reason=rationale,
-            )
-        )
-        await self.s.commit()
-        await self.s.refresh(dispute)
-        if resolved_belief is not belief:
-            await self.s.refresh(resolved_belief)
-            for source_id in dict.fromkeys(evidence_source_ids):
-                source = await self.s.get(models.Source, UUID(source_id))
-                if source is None:
-                    continue
-                await self.add_evidence(
-                    resolved_belief.id,
-                    UUID(source_id),
-                    level=source.evidence_level,
-                    strength=min(1.0, claim.confidence),
-                    excerpt="",
+            dispute = locked.scalar_one()
+            if dispute.belief_id != belief.id or dispute.incoming_claim_id != claim.id:
+                raise ValueError("dispute, belief and claim do not belong together")
+            prior_resolution = (dispute.resolution_metadata or {}).get("outcome")
+            if prior_resolution and not (
+                prior_resolution == "unresolved" and outcome != "unresolved"
+            ):
+                if prior_resolution != outcome:
+                    raise ValueError("dispute has already been resolved differently")
+                resolved_id = (dispute.resolution_metadata or {}).get("resolved_belief_id")
+                result = (
+                    await self.s.get(models.Belief, UUID(resolved_id)) if resolved_id else belief
                 )
+                await self.s.commit()
+                return result
+            if dispute.status in {
+                DisputeStatus.RESOLVED_OLD,
+                DisputeStatus.RESOLVED_NEW,
+                DisputeStatus.RESOLVED_CONDITIONAL,
+            }:
+                raise ValueError("legacy resolved dispute cannot be reopened")
+
+            if outcome == "conditional" and (not conditional_statement.strip() or not conditions):
+                raise ValueError("conditional resolution requires a statement and conditions")
+            if outcome == "conditional" and (
+                normalize_text_key(conditional_statement) != normalize_text_key(claim.statement)
+                or any(
+                    normalize_text_key(condition) not in normalize_text_key(claim.statement)
+                    for condition in conditions
+                )
+            ):
+                raise ValueError("conditional conclusion must be the supported conditional claim")
+            qualified = await self.qualified_resolution_sources(
+                dispute, belief, claim, outcome, evidence_source_ids
+            )
+            independent = independent_source_representatives(qualified)
+            required = agent_config().learning.min_independent_sources_for_dispute_resolution
+            if outcome != "unresolved" and (
+                len(independent) < required
+                or {source.source_id for source in independent} != set(evidence_source_ids)
+            ):
+                raise ValueError("dispute evidence is not independently supported")
+            if outcome == "unresolved" and evidence_source_ids:
+                raise ValueError("unresolved outcome cannot claim accepted evidence")
+
+            previous_state = self._belief_snapshot(belief)
+            resolved_belief = belief
+            if outcome == "keep_old":
+                prior_status = (dispute.previous_belief_state or {}).get("status")
+                if not prior_status:
+                    raise ValueError("cannot restore a belief without preserved prior state")
+                belief.status = BeliefStatus(prior_status)
+                dispute.status = DisputeStatus.RESOLVED_OLD
+            elif outcome in {"adopt_new", "conditional"}:
+                belief.status = (
+                    BeliefStatus.RETRACTED if outcome == "adopt_new" else BeliefStatus.WEAKENED
+                )
+                dispute.status = (
+                    DisputeStatus.RESOLVED_NEW
+                    if outcome == "adopt_new"
+                    else DisputeStatus.RESOLVED_CONDITIONAL
+                )
+                score = sum(
+                    min(1.0, source.evidence_level / 5) * source.credibility_score
+                    for source in independent
+                ) / len(independent)
+                resolved_belief = models.Belief(
+                    topic=claim.topic or belief.topic,
+                    statement=claim.statement if outcome == "adopt_new" else conditional_statement,
+                    explanation=claim.reasoning,
+                    status=BeliefStatus.SUPPORTED,
+                    confidence=min(0.7, score),
+                    evidence_score=score,
+                    test_score=0.0,
+                    stability_score=0.1,
+                    source_count=len(independent),
+                    metadata_json={
+                        "conditions": conditions,
+                        "resolved_from_dispute": str(dispute.id),
+                    },
+                )
+                self.s.add(resolved_belief)
+                await self.s.flush()
+                for source_info in independent:
+                    source_id = UUID(source_info.source_id)
+                    self.s.add(
+                        models.Evidence(
+                            belief_id=resolved_belief.id,
+                            source_id=source_id,
+                            kind="web_source",
+                            stance="support",
+                            evidence_level=source_info.evidence_level,
+                            dedup_key=stable_key(
+                                "evidence", resolved_belief.id, source_id, "web_source", "support"
+                            ),
+                            strength=min(1.0, source_info.credibility_score),
+                            excerpt="",
+                        )
+                    )
+                self.s.add(
+                    models.BeliefHistory(
+                        belief_id=resolved_belief.id,
+                        action="created_from_dispute_resolution",
+                        previous_state={},
+                        new_state=self._belief_snapshot(resolved_belief),
+                        reason=rationale,
+                    )
+                )
+            else:
+                belief.status = BeliefStatus.UNRESOLVED
+                dispute.status = DisputeStatus.UNRESOLVED
+
+            dispute.resolution_notes = rationale
+            dispute.resolution_metadata = {
+                "outcome": outcome,
+                "conditions": conditions,
+                "evidence_source_ids": [source.source_id for source in independent],
+                "resolved_belief_id": str(resolved_belief.id),
+            }
+            dispute.resolved_at = None if outcome == "unresolved" else datetime.now(UTC)
             self.s.add(
                 models.BeliefHistory(
-                    belief_id=resolved_belief.id,
-                    action="created_from_dispute_resolution",
-                    previous_state={},
-                    new_state=self._belief_snapshot(resolved_belief),
+                    belief_id=belief.id,
+                    action="dispute_resolved",
+                    previous_state=previous_state,
+                    new_state=self._belief_snapshot(belief),
                     reason=rationale,
                 )
             )
             await self.s.commit()
-        return resolved_belief
+            return resolved_belief
+        except Exception:
+            await self.s.rollback()
+            raise
 
     async def save_evaluation(
         self, goal_id: UUID, learning_session_id: UUID, result

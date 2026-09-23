@@ -16,6 +16,7 @@ from autodidact.knowledge.claim_support import ClaimSupportValidator
 from autodidact.knowledge.conflicts import ConflictDetector
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import EvidenceSource, normalize_url
+from autodidact.knowledge.support_assessment import ClaimSupportAssessor
 from autodidact.learning.evaluator import Evaluator
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
@@ -54,6 +55,8 @@ class AutonomousLearner:
         self.search = search or build_search_provider()
         self.reader = WebReader()
         self.claim_support = ClaimSupportValidator()
+
+        self.support_assessor = ClaimSupportAssessor(llm)
 
     async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
         try:
@@ -149,9 +152,10 @@ class AutonomousLearner:
         seen_claim_ids = set()
         for draft in learned.claims:
             validation = self.claim_support.validate(draft, stored_sources)
-            source_ids = validation.anchored_source_ids
+            assessment = await self.support_assessor.assess(draft, validation, stored_sources)
+            source_ids = assessment.supported_source_ids
             claim = await self.repo.add_claim(draft, learning_session.id, source_ids)
-            await self.repo.record_claim_evidence(claim, validation.records)
+            await self.repo.record_claim_evidence(claim, assessment.records)
             if claim.id not in seen_claim_ids:
                 claim_rows.append(claim)
                 seen_claim_ids.add(claim.id)

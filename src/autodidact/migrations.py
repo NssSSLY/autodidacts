@@ -53,10 +53,7 @@ def expected_schema_columns() -> dict[str, set[str]]:
 
 
 def baseline_schema_columns() -> dict[str, set[str]]:
-    baseline = {
-        table_name: set(column_names)
-        for table_name, column_names in expected_schema_columns().items()
-    }
+    baseline = source_provenance_schema_columns()
     for table_name, column_names in POST_BASELINE_COLUMNS.items():
         baseline[table_name].difference_update(column_names)
     return baseline
