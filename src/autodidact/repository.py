@@ -1,3 +1,4 @@
+# 文件职责：封装认知数据库读写及事务：目标、来源、主张锚点、信念、争议、历史和评估。
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -40,6 +41,7 @@ _OPEN_DISPUTE_STATUSES = (
 )
 
 
+# 功能：仅识别指定约束的 PostgreSQL 唯一键竞争，其他完整性错误不得当作成功去重。
 def _expected_unique_violation(exc: IntegrityError, constraint: str) -> bool:
     """Only a known unique race is safe to treat as an existing row."""
     original = getattr(exc, "orig", None)
@@ -57,11 +59,13 @@ def _expected_unique_violation(exc: IntegrityError, constraint: str) -> bool:
 
 
 class Repository(LearningState):
+    # 功能：绑定异步数据库会话、来源血缘和派生检索索引；运行状态方法由 LearningState 继承。
     def __init__(self, session: AsyncSession):
         self.s = session
         self.lineage = SourceLineage(session)
         self.index = RetrievalIndex(session)
 
+    # 功能：按智能体名称读取身份，缺失时创建使命与当前焦点并提交。
     async def get_or_create_agent(self, name: str, mission: str, focus: str) -> models.Agent:
         q = await self.s.execute(select(models.Agent).where(models.Agent.name == name))
         agent = q.scalar_one_or_none()
@@ -73,12 +77,14 @@ class Repository(LearningState):
         await self.s.refresh(agent)
         return agent
 
+    # 功能：复用去重入库方法，返回已有或新建目标，不向调用者暴露创建标记。
     async def add_goal(
         self, g: CandidateGoal, score: float, parent_goal_id: UUID | None = None
     ) -> models.Goal:
         goal, _ = await self.add_goal_if_absent(g, score, parent_goal_id)
         return goal
 
+    # 功能：规范化标题去重活动目标，新增时保存父目标与评分并同步关键词索引，返回目标及是否新建。
     async def add_goal_if_absent(
         self,
         g: CandidateGoal,
@@ -114,6 +120,7 @@ class Repository(LearningState):
         await self.s.refresh(goal)
         return goal, True
 
+    # 功能：按优先级和创建时间选择未开始或未达重试上限的失败目标。
     async def next_goal(self, max_retry: int = 3) -> models.Goal | None:
         q = await self.s.execute(
             select(models.Goal)
@@ -129,6 +136,7 @@ class Repository(LearningState):
         )
         return q.scalar_one_or_none()
 
+    # 功能：更新目标阶段、置信度和重试次数；终态写入会话结果以防续跑重复累计失败。
     async def update_goal_status(
         self,
         goal: models.Goal,
@@ -176,6 +184,7 @@ class Repository(LearningState):
             }
         await self.s.commit()
 
+    # 功能：创建并提交一个学习尝试，尽早保存计划以便后续阶段恢复。
     async def create_learning_session(self, goal_id: UUID, plan: dict) -> models.LearningSession:
         item = models.LearningSession(goal_id=goal_id, plan=plan)
         self.s.add(item)
@@ -183,6 +192,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
+    # 功能：合并会话结果，保存反思、成功标记和完成时间；不删除历史工作项。
     async def finish_learning_session(
         self, item: models.LearningSession, result: dict, reflection: dict, success: bool
     ) -> None:
@@ -192,6 +202,7 @@ class Repository(LearningState):
         item.completed_at = datetime.now(UTC)
         await self.s.commit()
 
+    # 功能：按内容 hash 复用来源，补缺失质量/血缘 metadata 并记录依赖边，保留原文。
     async def upsert_source(self, doc: SourceDocument, content_hash: str) -> models.Source:
         q = await self.s.execute(
             select(models.Source).where(models.Source.content_hash == content_hash)
@@ -248,6 +259,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
+    # 功能：按会话和规范主张去重候选 Claim；唯一约束竞争只在已知约束上恢复，不自动创建信念。
     async def add_claim(
         self, draft: ClaimDraft, learning_session_id: UUID, source_ids: list[str]
     ) -> models.Claim:
@@ -291,6 +303,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
+    # 功能：持久化引文锚点及语义判定，排除同源混合矛盾记录，避免旧锚点冒充已支持证据。
     async def record_claim_evidence(
         self, claim: models.Claim, records: list[ClaimEvidenceVerification]
     ) -> None:
@@ -339,6 +352,7 @@ class Repository(LearningState):
             claim.source_ids = qualified
             await self.s.commit()
 
+    # 功能：读取最新非撤回信念，作为无需向量的兼容记忆入口。
     async def recent_beliefs(self, limit: int = 30) -> list[models.Belief]:
         q = await self.s.execute(
             select(models.Belief)
@@ -348,6 +362,7 @@ class Repository(LearningState):
         )
         return list(q.scalars())
 
+    # 功能：按 pgvector 余弦距离召回有向量的非撤回信念，供兼容调用及检索使用。
     async def semantic_beliefs(
         self, embedding: list[float], limit: int = 30, *, fingerprint: str | None = None
     ) -> list[models.Belief]:
@@ -366,6 +381,7 @@ class Repository(LearningState):
         )
         return list(q.scalars())
 
+    # 功能：保存信念向量与提供方指纹，并更新派生索引以避免跨模型向量混用。
     async def set_belief_embedding(
         self, belief: models.Belief, embedding: list[float], *, fingerprint: str | None = None
     ) -> None:
@@ -377,6 +393,7 @@ class Repository(LearningState):
             }
         await self.s.commit()
 
+    # 功能：按主题文本匹配读取非撤回信念，用于旧式主题召回。
     async def beliefs_for_topic(self, topic: str, limit: int = 10) -> list[models.Belief]:
         q = await self.s.execute(
             select(models.Belief)
@@ -387,6 +404,7 @@ class Repository(LearningState):
         )
         return list(q.scalars())
 
+    # 功能：由已批准的 Claim 创建或更新信念，保存分数、来源数和历史，并防止重复重放变更。
     async def create_belief_from_claim(
         self,
         claim: models.Claim,
@@ -455,6 +473,7 @@ class Repository(LearningState):
         await self.s.commit()
         return belief
 
+    # 功能：按证据键去重保存信念与来源的关系、摘录、等级和强度。
     async def add_evidence(
         self, belief_id: UUID, source_id: UUID, level: int, strength: float, excerpt: str = ""
     ) -> None:
@@ -494,6 +513,7 @@ class Repository(LearningState):
             if not _expected_unique_violation(exc, "uq_evidence_dedup_key_current"):
                 raise
 
+    # 功能：提取信念结论、状态及评分字段，作为争议和历史中的变更前快照。
     @staticmethod
     def _belief_snapshot(belief: models.Belief) -> dict:
         return {
@@ -507,12 +527,14 @@ class Repository(LearningState):
             "source_count": belief.source_count,
         }
 
+    # 功能：调用幂等争议创建入口，只返回争议实体。
     async def create_dispute(
         self, belief: models.Belief, claim: models.Claim, score: float, explanation: str
     ) -> models.Dispute:
         item, _ = await self.get_or_create_dispute(belief, claim, score, explanation)
         return item
 
+    # 功能：复用相同开放冲突，或创建争议、冻结旧信念状态并记录争议历史，返回创建标记。
     async def get_or_create_dispute(
         self,
         belief: models.Belief,
@@ -577,6 +599,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item, True
 
+    # 功能：从库内支持记录筛选争议指定结论的合格来源，不能仅凭模型提供的 source_id 决议。
     async def qualified_resolution_sources(
         self,
         dispute: models.Dispute,
@@ -642,6 +665,7 @@ class Repository(LearningState):
             found[source_id] = source
         return await self.lineage.evidence_sources(list(found.values()))
 
+    # 功能：锁定争议并在同一事务内应用四种结果、证据和历史；证据不足或条件结论无支撑时拒绝改写。
     async def apply_dispute_resolution(
         self,
         dispute: models.Dispute,
@@ -821,6 +845,7 @@ class Repository(LearningState):
             await self.s.rollback()
             raise
 
+    # 功能：保存按学习会话关联的分维度评估与审计信息，重放时避免重复保存同一结果。
     async def save_evaluation(
         self, goal_id: UUID, learning_session_id: UUID, result
     ) -> models.Evaluation:
@@ -859,6 +884,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
+    # 功能：组织信念、开放争议等认知摘要供模型参考；摘要内容不是控制器指令。
     async def epistemic_context(self) -> str:
         beliefs = await self.recent_beliefs(20)
         open_disputes = (

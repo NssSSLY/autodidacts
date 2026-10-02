@@ -1,3 +1,4 @@
+# 文件职责：定义考试、答案、核源评分与候选方法的结构化 schema。
 from typing import Literal
 
 from pydantic import BaseModel, Field

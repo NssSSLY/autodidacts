@@ -1,3 +1,4 @@
+# 文件职责：定义规划、来源、主张、评估、目标、争议及模型回答的 Pydantic 协议和约束。
 from __future__ import annotations
 
 from typing import Literal

@@ -1,3 +1,4 @@
+# 文件职责：为模型调用保存等级 0 观察、错误、时延、usage 及预算账本。
 """Record model output as level-zero observations, including failed calls."""
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from autodidact.runtime import OperationBudget
 
 
 class ObservedLLM(LLM):
+    # 功能：包装模型并建立独立审计会话与预算，记录学习/裁判等调用角色。
     def __init__(self, inner: LLM, engine, *, role: str = "learner"):
         self.inner = inner
         self.provider_name, self.model_name = inner.provider_name, inner.model_name
@@ -22,9 +24,11 @@ class ObservedLLM(LLM):
         self.role = role
         self.context: dict = {}
 
+    # 功能：绑定目标、会话、阶段或实验组上下文以关联后续审计记录。
     def bind(self, **context):
         self.context = context
 
+    # 功能：预留预算、执行模型、在成功/失败后记 usage 与原始输出；保存不等于承认输出为真。
     async def _call(self, system, user, invoke, schema_name=None):
         settings = runtime_settings()
         # UTF-8 bytes are a conservative admission estimate, not reported token usage.
@@ -98,11 +102,13 @@ class ObservedLLM(LLM):
                 )
         return result
 
+    # 功能：经统一审计入口执行文本请求，保留温度参数。
     async def text(self, system, user, *, temperature=None):
         return await self._call(
             system, user, lambda: self.inner.text(system, user, temperature=temperature)
         )
 
+    # 功能：将 schema 纳入预算/审计提示，保持内部结构化校验和 Mock 协议兼容。
     async def structured(self, system, user, schema):
         import json
 

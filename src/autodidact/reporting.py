@@ -1,3 +1,4 @@
+# 文件职责：汇总指定时间窗的闭卷趋势、资源用量、错误及冻结实验报告。
 from __future__ import annotations
 
 from collections import Counter
@@ -8,6 +9,7 @@ from sqlalchemy import select
 from autodidact import models
 
 
+# 功能：读取时间窗内评估/操作/报告，生成成长与费用摘要；日常评分不等于冻结基准增益。
 async def longitudinal_report(repo, days=30):
     now = datetime.now(UTC)
     start = now - timedelta(days=days)

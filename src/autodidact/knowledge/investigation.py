@@ -1,3 +1,4 @@
+# 文件职责：独立研究争议双方和条件结论，保存调查主张后交给受门控的 Resolver。
 from __future__ import annotations
 
 import json
@@ -16,6 +17,7 @@ from autodidact.tools.reader import WebReader
 
 
 class DisputeInvestigator:
+    # 功能：绑定仓库、模型、研究收集器及锚点/支持/决议组件。
     def __init__(self, repo, llm, collector):
         self.repo, self.llm, self.collector = repo, llm, collector
         self.validator = ClaimSupportValidator()
@@ -27,6 +29,7 @@ class DisputeInvestigator:
             ),
         )
 
+    # 功能：有界开展争议调查，重审双方原文支持并保存条件 Claim，合法提议才应用，否则保留未解决。
     async def investigate(self, dispute_id, attempt):
         dispute = await self.repo.s.get(models.Dispute, UUID(str(dispute_id)))
         if dispute is None:

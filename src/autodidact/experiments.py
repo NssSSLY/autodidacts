@@ -1,3 +1,4 @@
+# 文件职责：冻结题集与记忆快照，执行基准、四组模型迁移比较和研究方法验证。
 from __future__ import annotations
 
 import hashlib
@@ -24,11 +25,13 @@ class BenchmarkGrade(BaseModel):
     rationale: str
 
 
+# 功能：将数据规范化序列化后求 SHA-256，标识固定题集或记忆快照。
 def canonical_hash(value):
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+# 功能：从 JSON 文件校验题目与评分依据，按内容摘要保存冻结基准报告。
 async def freeze_suite(repo, path):
     items = [
         FrozenItem.model_validate(x).model_dump()
@@ -43,6 +46,7 @@ async def freeze_suite(repo, path):
     return report
 
 
+# 功能：隔离答题与评分上下文，按冻结答案或 rubric 逐题评分并返回分数/校准代理与回答记录。
 async def evaluate_suite(llm, judge, items, memory, *, skill=None):
     details = []
     for raw in items:
@@ -93,9 +97,11 @@ async def evaluate_suite(llm, judge, items, memory, *, skill=None):
 
 
 class ModelMigrationProtocol:
+    # 功能：绑定持久仓库和固定裁判，供新旧模型使用相同实验条件。
     def __init__(self, repo, judge):
         self.repo, self.judge = repo, judge
 
+    # 功能：对同题集/记忆做 A1/A2/B1/B2 比较并保存报告，不切换模型或重写旧信念。
     async def compare(self, old, new, frozen_id):
         frozen = await self.repo.s.get(models.ResearchReport, UUID(str(frozen_id)))
         if frozen is None or frozen.kind != "frozen_benchmark":
@@ -134,6 +140,7 @@ class ModelMigrationProtocol:
         return {"report_id": str(report.id), **report.payload}
 
 
+# 功能：要求至少五题并拒绝与技能提取目标题面相同的题，比较方法增益后保存报告；不保证题目语义独立。
 async def validate_skill(repo, llm, judge, skill_id, frozen_id):
     skill = await repo.s.get(models.Skill, UUID(str(skill_id)))
     suite = await repo.s.get(models.ResearchReport, UUID(str(frozen_id)))

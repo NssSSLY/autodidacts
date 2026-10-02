@@ -1,3 +1,4 @@
+# 文件职责：检查决议事务、历史与重放；现有模拟会话缺完整 AsyncSession 接口，两项基线失败待修复。
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,17 +11,21 @@ from autodidact.repository import Repository
 
 
 class _Result:
+    # 功能：保存争议查询的模拟返回值。
     def __init__(self, values):
         self.values = values
 
+    # 功能：返回预置单实体供行锁查询替身使用。
     def scalar_one(self):
         return self.values[0]
 
+    # 功能：返回模拟结果内的对象列表，不连接数据库。
     def scalars(self):
         return self.values
 
 
 class _Session:
+    # 功能：初始化争议/信念、待写实体及提交/回滚计数；不是完整 AsyncSession 实现。
     def __init__(self, dispute, belief):
         self.dispute = dispute
         self.belief = belief
@@ -28,29 +33,36 @@ class _Session:
         self.commits = 0
         self.rollbacks = 0
 
+    # 功能：返回预置争议，模拟事务中的查询执行。
     async def execute(self, _statement):
         return _Result([self.dispute])
 
+    # 功能：按模型类型返回旧信念，其它类型返回空以控制测试路径。
     async def get(self, model, _item_id):
         if model is models.Belief:
             return self.belief
         return None
 
+    # 功能：把新实体加入模拟待写列表，便于检查证据和历史。
     def add(self, item):
         self.added.append(item)
 
+    # 功能：为新信念生成模拟 UUID，供后续外键关联断言使用。
     async def flush(self):
         for item in self.added:
             if isinstance(item, models.Belief) and item.id is None:
                 item.id = uuid4()
 
+    # 功能：累计事务提交次数，不真正写库。
     async def commit(self):
         self.commits += 1
 
+    # 功能：累计事务回滚次数，供错误路径检查。
     async def rollback(self):
         self.rollbacks += 1
 
 
+# 功能：构造旧 verified 信念、新主张和未解决争议供各事务测试复用。
 def _entities():
     belief = models.Belief(
         id=uuid4(),
@@ -84,6 +96,7 @@ def _entities():
     return dispute, belief, claim
 
 
+# 功能：验证重复未解决决议不重复产生历史记录。
 @pytest.mark.asyncio
 async def test_unresolved_resolution_writes_one_history_and_retries_idempotently():
     dispute, belief, claim = _entities()
@@ -109,6 +122,7 @@ async def test_unresolved_resolution_writes_one_history_and_retries_idempotently
     assert dispute.resolution_metadata["outcome"] == "unresolved"
 
 
+# 功能：检查采用新结论时信念、证据和历史一并提交；当前受模拟会话缺 scalars 限制。
 @pytest.mark.asyncio
 async def test_adopt_new_resolution_commits_new_belief_evidence_and_histories_together():
     dispute, belief, claim = _entities()
@@ -116,6 +130,7 @@ async def test_adopt_new_resolution_commits_new_belief_evidence_and_histories_to
     repo = Repository(session)  # type: ignore[arg-type]
     first, second = uuid4(), uuid4()
 
+    # 功能：提供两个库内合格来源替身，隔离来源查询路径。
     async def qualified(*_args):
         return [
             EvidenceSource(str(first), publisher_key="one.example", evidence_level=4),
@@ -144,6 +159,7 @@ async def test_adopt_new_resolution_commits_new_belief_evidence_and_histories_to
     assert sum(isinstance(item, models.BeliefHistory) for item in session.added) == 2
 
 
+# 功能：验证条件化结论不能偏离已支持 Claim 的正文。
 @pytest.mark.asyncio
 async def test_conditional_resolution_rejects_statement_not_supported_by_the_claim():
     dispute, belief, claim = _entities()
@@ -164,16 +180,19 @@ async def test_conditional_resolution_rejects_statement_not_supported_by_the_cla
     assert session.rollbacks == 1
 
 
+# 功能：验证与新主张无关联支持记录的来源不能用于替换旧结论。
 @pytest.mark.asyncio
 async def test_repository_rejects_unlinked_sources_for_new_claim():
     dispute, belief, claim = _entities()
     source_id = uuid4()
 
     class SourceSession(_Session):
+        # 功能：模拟无关联证据的查询结果，供决议拒绝路径使用。
         async def execute(self, statement):
             assert "claim_evidence" in str(statement)
             return _Result([SimpleNamespace(source_id=source_id)])
 
+        # 功能：为特定模型返回受控实体，模拟来源/主张查询。
         async def get(self, model, _item_id):
             if model is models.Source:
                 return SimpleNamespace(
@@ -192,6 +211,7 @@ async def test_repository_rejects_unlinked_sources_for_new_claim():
     )
 
 
+# 功能：检查未解决争议补证后可采用新主张；当前受模拟会话缺 scalars 限制。
 @pytest.mark.asyncio
 async def test_unresolved_dispute_can_later_adopt_new_supported_claim():
     dispute, belief, claim = _entities()
@@ -210,6 +230,7 @@ async def test_unresolved_dispute_can_later_adopt_new_supported_claim():
 
     first, second = uuid4(), uuid4()
 
+    # 功能：补入两个独立来源替身，模拟后续调查取得新证据。
     async def qualified(*_args):
         return [
             EvidenceSource(str(first), publisher_key="one.example", evidence_level=4),

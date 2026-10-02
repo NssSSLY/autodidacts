@@ -1,3 +1,4 @@
+# 文件职责：限制公网 HTTP(S) 读取，固定已校验 IP 并保留 TLS/Host 身份及响应上限。
 from __future__ import annotations
 
 import asyncio
@@ -10,6 +11,7 @@ import httpx
 from autodidact.config import agent_config, runtime_settings
 
 
+# 功能：校验 URL 无凭据、端口合法且全部解析地址为公网，返回原解析结果和固定 IP 请求 URL。
 async def public_address(url: str):
     parsed = urlsplit(url)
     if (
@@ -34,6 +36,7 @@ async def public_address(url: str):
     return parsed, pinned
 
 
+# 功能：逐跳校验并读取有界响应，禁用代理/压缩且保留 TLS SNI；返回最终 URL、头、正文 bytes 和编码。
 async def fetch_public(url: str):
     cfg = agent_config().learning
     current = url

@@ -1,3 +1,4 @@
+# 文件职责：为来源增加规范 URL、出版方、质量类别/原因与查询索引。
 """增加来源规范化与质量元数据。
 
 Revision ID: 20260915_0002
@@ -16,6 +17,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+# 功能：增加来源质量/身份字段，旧 normalized_url 仅按原 URL 回填，不伪造高质量证明。
 def upgrade() -> None:
     op.add_column("sources", sa.Column("normalized_url", sa.Text(), nullable=True))
     op.add_column("sources", sa.Column("publisher_key", sa.String(length=255), nullable=True))
@@ -35,6 +37,7 @@ def upgrade() -> None:
     op.create_index("ix_sources_publisher_key", "sources", ["publisher_key"], unique=False)
 
 
+# 功能：删除本 revision 的来源字段与索引，会丢失新增质量/身份 metadata。
 def downgrade() -> None:
     op.drop_index("ix_sources_publisher_key", table_name="sources")
     op.drop_index("ix_sources_normalized_url", table_name="sources")

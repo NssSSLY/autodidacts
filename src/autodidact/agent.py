@@ -1,3 +1,4 @@
+# 文件职责：组织持久学习主循环：召回、研究、核证、争议、评估、晋升和续跑，模型不直接决定真相。
 from __future__ import annotations
 
 import asyncio
@@ -56,6 +57,7 @@ log = logging.getLogger(__name__)
 
 
 class AutonomousLearner:
+    # 功能：组装仓库、审计/续跑模型、预算化搜索阅读、评估与晋升策略，不在构造时执行学习。
     def __init__(
         self,
         session: AsyncSession,
@@ -100,7 +102,9 @@ class AutonomousLearner:
 
         self.support_assessor = ClaimSupportAssessor(llm)
 
+    # 功能：混合召回与候选主张相关的非撤回旧信念，作为冲突比较对象，并缓存本尝试的召回结果。
     async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
+        # 功能：查询主张相关的信念实体，转换为可持久重放的信念 ID 列表。
         async def recall():
             hits = await HybridRetriever(self.repo, self.embedding).retrieve(
                 statement, kinds=("belief",), limit=40
@@ -110,6 +114,7 @@ class AutonomousLearner:
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
+    # 功能：计算模型、嵌入、学习策略和目标内容的签名，防止在不兼容配置下继续旧尝试。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
@@ -135,6 +140,7 @@ class AutonomousLearner:
             json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
         ).hexdigest()
 
+    # 功能：收集认知上下文、已验证技能和可选网页模型建议，返回供本次规划冻结的输入。
     async def _planning_inputs(self, goal):
         context = await self.repo.epistemic_context()
         hits = await HybridRetriever(self.repo, self.embedding).retrieve(goal.title, limit=15)
@@ -154,6 +160,7 @@ class AutonomousLearner:
             for provider in enabled[:2]:
                 try:
 
+                    # 功能：请求一个已启用网页模型的规划建议；它仍是等级 0 观察而非事实证据。
                     async def ask(provider=provider):
                         answer = await service.ask(provider, goal.title, goal_id=str(goal.id))
                         return answer.response[:4000]
@@ -166,12 +173,14 @@ class AutonomousLearner:
                     log.warning("网页模型降级：%s", type(exc).__name__)
         return {"context": context, "skill_ids": [str(skill.id) for skill in skills]}
 
+    # 功能：尽力同步实体关键词和向量索引，索引/嵌入失败不使核心认知写入失效。
     async def _index_entity(self, kind, row):
         try:
             await self.repo.index.embed_entity(kind, row, self.embedding)
         except Exception as exc:  # noqa: BLE001 - optional index cannot block epistemic writes.
             log.debug("语义索引降级：%s", type(exc).__name__)
 
+    # 功能：获取或创建持久智能体；目标池为空时添加种子目标，不重复初始化已有目标。
     async def bootstrap(self) -> None:
         identity = self.cfg.agent
         await self.repo.get_or_create_agent(identity.name, identity.mission, identity.initial_focus)
@@ -191,6 +200,7 @@ class AutonomousLearner:
             )
             await self.repo.add_goal(seed, goal_score(seed, self.cfg.learning.exploration_rate))
 
+    # 功能：目标不足时依据使命与已有上下文提出候选目标，在每日配额内去重入库。
     async def ensure_goal_pool(self) -> None:
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
@@ -223,6 +233,7 @@ class AutonomousLearner:
         for c in candidates[:quota]:
             await self.repo.add_goal(c, goal_score(c, self.cfg.learning.exploration_rate))
 
+    # 功能：获取控制器互斥后运行一轮学习，区分预算、取消和一般异常并保留恢复状态。
     async def run_cycle(self) -> dict:
         try:
             async with controller_lock(self.engine):
@@ -267,6 +278,7 @@ class AutonomousLearner:
         except ControllerBusy as exc:
             return {"status": "busy", "reason": str(exc)}
 
+    # 功能：记录失败或预算暂停；支持续跑的会话保留工作项，旧会话沿有界重试路径收尾。
     async def _finish_failure(self, reason, budget_stop=False):
         await self.repo.s.rollback()
         if self.current_attempt:
@@ -301,6 +313,7 @@ class AutonomousLearner:
                     max_retry=self.cfg.learning.max_retry,
                 )
 
+    # 功能：选取可恢复尝试或新目标，逐阶段研究、核证、评估和谨慎晋升，并保存结果与后续任务。
     async def _run_cycle(self) -> dict:
         learning_session = await self.repo.resumable_attempt()
         resuming = learning_session is not None
@@ -671,6 +684,7 @@ class AutonomousLearner:
             "follow_up_goals": follow_up_goals_created,
         }
 
+    # 功能：按配置或参数运行有限轮次并间隔等待；不是操作系统常驻服务或分布式任务队列。
     async def run_daemon(self, max_cycles: int | None = None) -> None:
         cycles = max_cycles or self.cfg.learning.max_cycles_per_process
         for _ in range(cycles):

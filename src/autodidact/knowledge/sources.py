@@ -1,3 +1,4 @@
+# 文件职责：规范 URL/出版方、规则初分来源质量，按出版方/正文/血缘折叠独立证据组。
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ _GOVERNMENT_SUFFIXES = {"gov.au", "gov.cn", "gov.uk", "go.jp"}
 _ACADEMIC_SUFFIXES = {"ac.uk", "edu.au", "edu.cn", "edu.hk"}
 
 
+# 功能：去除片段和已知跟踪参数，统一主机/默认端口并保留内容查询参数，用于来源去重。
 def normalize_url(url: str) -> str:
     """Return a stable web URL for provenance and duplicate detection.
 
@@ -62,6 +64,7 @@ def normalize_url(url: str) -> str:
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
+# 功能：依据有限后缀规则估算出版方，分开公共托管租户；这是保守身份启发式而非作者认证。
 def publisher_key(url: str) -> str:
     """Return a conservative publisher identity without a public-suffix dependency."""
     host = (urlsplit(normalize_url(url)).hostname or "").lower().removeprefix("www.")
@@ -93,6 +96,7 @@ class RuleBasedSourceQualityClassifier:
     that a source is correct or that a claim is supported by the source.
     """
 
+    # 功能：保存各来源类别的等级配置，供可解释规则分类使用。
     def __init__(
         self,
         *,
@@ -110,6 +114,7 @@ class RuleBasedSourceQualityClassifier:
         self.primary_or_official_level = primary_or_official_level
         self.proof_or_experiment_level = proof_or_experiment_level
 
+    # 功能：按来源类型和 URL 给出质量类别、等级及理由；域名规则不证明正文或主张真实。
     def assess(self, url: str, source_type: str = "web") -> SourceAssessment:
         kind = source_type.strip().lower()
         normalized = normalize_url(url)
@@ -177,12 +182,14 @@ class RuleBasedSourceQualityClassifier:
         )
 
 
+# 功能：判断主机是否匹配有限政府/军事域名规则。
 def _is_government_host(host: str) -> bool:
     return host.endswith((".gov", ".mil")) or any(
         host == suffix or host.endswith(f".{suffix}") for suffix in _GOVERNMENT_SUFFIXES
     )
 
 
+# 功能：判断主机是否匹配有限学术域名规则。
 def _is_academic_host(host: str) -> bool:
     return host.endswith(".edu") or any(
         host == suffix or host.endswith(f".{suffix}") for suffix in _ACADEMIC_SUFFIXES
@@ -201,6 +208,7 @@ class EvidenceSource:
     credibility_score: float = 0.3
 
 
+# 功能：按共享出版方、内容、血缘或依赖键合并证据组，每组选最高质量代表，避免转载多票。
 def independent_source_representatives(sources: list[EvidenceSource]) -> list[EvidenceSource]:
     """Collapse sources sharing a publisher or exact content into evidence groups."""
     unique_by_id = {source.source_id: source for source in sources}
@@ -210,12 +218,14 @@ def independent_source_representatives(sources: list[EvidenceSource]) -> list[Ev
 
     parents = list(range(len(items)))
 
+    # 功能：在并查集中查找证据所属组并压缩路径。
     def find(index: int) -> int:
         while parents[index] != index:
             parents[index] = parents[parents[index]]
             index = parents[index]
         return index
 
+    # 功能：合并两个已发现同源的证据组，确保传递依赖只算一组。
     def union(left: int, right: int) -> None:
         left_root, right_root = find(left), find(right)
         if left_root != right_root:

@@ -1,8 +1,10 @@
+# 文件职责：读取有大小/页数限制的 UTF-8 TXT/MD 或可选 PDF，导入不直接提升信念。
 from pathlib import Path
 
 from autodidact.schemas import SourceDocument
 
 
+# 功能：校验本地文件并提取文本/页码等 metadata，返回初始等级 1 的 SourceDocument；扫描 OCR 不在此实现。
 def read_local_document(path: str):
     source = Path(path).resolve(strict=True)
     if not source.is_file() or source.stat().st_size > 20_000_000:

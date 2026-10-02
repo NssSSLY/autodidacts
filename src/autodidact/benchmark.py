@@ -1,3 +1,4 @@
+# 文件职责：保留早期文件式基准评分接口；当前 CLI 冻结实验走 experiments.py。
 from __future__ import annotations
 
 import json
@@ -19,6 +20,7 @@ class BenchmarkJudge(BaseModel):
     rationale: str
 
 
+# 功能：读取早期题集、无工具回答后用模型 rubric 评分并汇总；不提供当前冻结快照与独立真值保证。
 async def run_benchmark(llm: LLM, path: str) -> dict:
     items = [BenchmarkItem.model_validate(x) for x in json.loads(Path(path).read_text(encoding="utf-8"))]
     scores = []

@@ -1,3 +1,4 @@
+# 文件职责：安全读取网页、提取正文及质量/血缘 metadata，并可附加网页预算。
 from __future__ import annotations
 
 import hashlib
@@ -14,6 +15,7 @@ from autodidact.schemas import SourceDocument
 
 
 class WebReader:
+    # 功能：按来源等级配置创建质量分类器，初始化可选预算为未绑定。
     def __init__(self):
         policy = agent_config().source_policy
         self.quality_classifier = RuleBasedSourceQualityClassifier(
@@ -25,6 +27,7 @@ class WebReader:
             proof_or_experiment_level=policy.proof_or_reproducible_experiment_level,
         )
 
+    # 功能：预算准入后读取公开网页，校验内容类型、提取正文/血缘/质量并记录读取成功或错误。
     async def read(self, url: str) -> SourceDocument:
         from urllib.parse import urljoin
 
@@ -84,12 +87,14 @@ class WebReader:
             await budget.finish(batch)
         return doc
 
+    # 功能：附加数据库预算账本并返回自身，供控制器组装调用链。
     def with_budget(self, engine):
         from autodidact.runtime import OperationBudget
 
         self.budget = OperationBudget(engine)
         return self
 
+    # 功能：对提取文本求 SHA-256，作为来源内容去重键。
     @staticmethod
     def hash_text(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()

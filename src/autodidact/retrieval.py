@@ -1,3 +1,4 @@
+# 文件职责：维护 Goal/Claim/Belief 派生索引并融合关键词、向量和有界降级召回。
 """Belief / Claim / Goal 混合召回。索引只用于定位，不改变认识论状态。"""
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ log = logging.getLogger(__name__)
 ENTITIES = {"belief": models.Belief, "claim": models.Claim, "goal": models.Goal}
 
 
+# 功能：提取英文/数字词和中文二三字片段，生成关键词检索词而非语言理解结论。
 def tokens(value):
     result = set(re.findall(r"[a-z0-9_]+", value.casefold()))
     for run in re.findall(r"[\u3400-\u9fff]+", value):
@@ -28,6 +30,7 @@ def tokens(value):
     return sorted(result)
 
 
+# 功能：按实体类型组织目标标题/描述或主张/信念正文/主题，作为索引文本。
 def entity_text(kind, row):
     if kind == "goal":
         return f"{row.title}\n{row.description or ''}"
@@ -35,9 +38,11 @@ def entity_text(kind, row):
 
 
 class RetrievalIndex:
+    # 功能：绑定数据库会话，用于可重建的检索索引写入。
     def __init__(self, session):
         self.s = session
 
+    # 功能：同步实体文本摘要与关键词，内容变化时使旧向量失效；不改变实体事实状态。
     async def sync(self, kind, row):
         value = entity_text(kind, row)
         digest = hashlib.sha256(value.encode()).hexdigest()
@@ -73,6 +78,7 @@ class RetrievalIndex:
             )
         )
 
+    # 功能：为实体计算并保存当前指纹向量，失败保留关键词索引以便降级。
     async def embed_entity(self, kind, row, embedding):
         async with self.s.begin_nested():
             await self.sync(kind, row)
@@ -92,6 +98,7 @@ class RetrievalIndex:
             await self.s.flush()
         await self.s.commit()
 
+    # 功能：分批回填三类实体的缺失/过期文本与可选向量，返回重建统计。
     async def rebuild(self, embedding=None, limit=200):
         updated, embedded, failures = 0, 0, 0
         for kind, model in ENTITIES.items():
@@ -169,6 +176,7 @@ class RetrievalHit:
     score: float
     ranks: dict
 
+    # 功能：将召回实体、排序分数及通道名转换成命令/工作台可显示的数据。
     def as_dict(self):
         return {
             "kind": self.kind,
@@ -182,9 +190,11 @@ class RetrievalHit:
 
 
 class HybridRetriever:
+    # 功能：绑定仓库和可选嵌入提供方，复用当前数据库会话。
     def __init__(self, repo, embedding=None):
         self.repo, self.s, self.embedding = repo, repo.s, embedding
 
+    # 功能：构造实体过滤条件；接纳记忆仅含无开放争议的 supported/verified 信念。
     def eligible(self, kind, accepted_only):
         if kind != "belief":
             return True
@@ -199,6 +209,7 @@ class HybridRetriever:
         )
         return (belief.status.in_(["supported", "verified"])) & ~disputed
 
+    # 功能：结合关键词和同指纹向量结果进行 RRF 排序；向量失败降级，相关性分数不代表事实可信度。
     async def retrieve(
         self, query, kinds=("belief", "claim", "goal"), limit=20, accepted_only=False
     ):
@@ -219,6 +230,7 @@ class HybridRetriever:
         candidates = {}
         pool = min(200, max(40, limit * 4))
 
+        # 功能：合并同实体的各检索通道名次，保留每通道最优排名。
         def collect(kind, channel, rows):
             for rank, row in enumerate(rows, 1):
                 key = (kind, row.id)

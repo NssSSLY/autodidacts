@@ -1,3 +1,4 @@
+# 文件职责：增加主张引文、认识论幂等约束、争议历史 metadata 和信念向量索引。
 """增加主张锚点、写入幂等键与争议决议元数据。
 
 Revision ID: 20260920_0003
@@ -20,6 +21,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+# 功能：新增 ClaimEvidence、可空幂等键/部分唯一索引及决议 metadata，保留旧记录缺失状态。
 def upgrade() -> None:
     op.add_column("claims", sa.Column("statement_key", sa.String(length=64), nullable=True))
     op.add_column("evidence", sa.Column("dedup_key", sa.String(length=64), nullable=True))
@@ -83,6 +85,7 @@ def upgrade() -> None:
     )
 
 
+# 功能：删除主张锚点表、幂等保护和争议新增字段/向量索引，会丢失新增审计信息。
 def downgrade() -> None:
     op.drop_index("uq_disputes_dedup_key_current", table_name="disputes")
     op.drop_index("uq_evidence_dedup_key_current", table_name="evidence")

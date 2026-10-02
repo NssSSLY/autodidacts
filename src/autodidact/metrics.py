@@ -1,10 +1,13 @@
+# 文件职责：提供数据库状态计数与学习/信念比例，不将数量当成智能提升证明。
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from autodidact import models
 
 
+# 功能：统计目标、信念、争议与历史评估均值，返回状态面板数据。
 async def dashboard(session: AsyncSession) -> dict:
+    # 功能：对指定业务表执行行数统计，供状态面板复用。
     async def count(model):
         return (await session.execute(select(func.count()).select_from(model))).scalar_one()
 

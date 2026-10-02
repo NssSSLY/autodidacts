@@ -1,3 +1,4 @@
+# 文件职责：验证候选主张引用是否来自已读原文，区分锚定成功与语义支持。
 from __future__ import annotations
 
 import hashlib
@@ -27,6 +28,7 @@ class ClaimEvidenceVerification:
 class ClaimSupportValidation:
     records: list[ClaimEvidenceVerification]
 
+    # 功能：提取逐字定位成功的去重来源 ID；仅锚定不证明支持主张。
     @property
     def anchored_source_ids(self) -> list[str]:
         return list(
@@ -41,11 +43,13 @@ class ClaimSupportValidation:
 class ClaimSupportValidator:
     """Verify citation provenance without treating a model quote as semantic proof."""
 
+    # 功能：设置并校验最短引文长度，避免用过短片段伪造支持。
     def __init__(self, min_excerpt_chars: int = 12):
         if min_excerpt_chars < 1:
             raise ValueError("min_excerpt_chars must be positive")
         self.min_excerpt_chars = min_excerpt_chars
 
+    # 功能：逐条检查 ClaimDraft 引文，返回含状态、原因和摘要的锚点结果。
     def validate(
         self,
         draft: ClaimDraft,
@@ -57,6 +61,7 @@ class ClaimSupportValidator:
         ]
         return ClaimSupportValidation(records)
 
+    # 功能：规范 URL/空白并检查已读来源、最短长度和逐字匹配，返回单条定位判定。
     def _validate_citation(
         self,
         citation: ClaimCitation,

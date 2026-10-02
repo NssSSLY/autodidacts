@@ -1,6 +1,8 @@
+# 文件职责：兼容源码、wheel 和 EXE 的迁移/配置资源路径定位。
 from pathlib import Path
 
 
+# 功能：优先返回包含迁移资源的源码根，否则返回安装包资源；缺失时明确报错而不创建空状态。
 def resource_root():
     source = Path(__file__).resolve().parents[2]
     if (source / "alembic.ini").is_file() and (source / "migrations").is_dir():

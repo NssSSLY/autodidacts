@@ -1,3 +1,4 @@
+# 文件职责：复用研究收集路径，供学习、独立核验与争议调查取得可读且去重的资料。
 from __future__ import annotations
 
 import logging
@@ -11,11 +12,13 @@ log = logging.getLogger(__name__)
 class ResearchCollector:
     """Shared retrieval path for learning, independent verification and disputes."""
 
+    # 功能：绑定搜索、可选阅读器和仓库，统一来源收集与血缘核查。
     def __init__(self, search, reader=None, repo=None):
         self.repo = repo
         self.search = search
         self.reader = reader or WebReader()
 
+    # 功能：搜索并阅读候选资料，排除已有 URL/正文/出版方及已知依赖；单来源失败降级，预算异常保留。
     async def fetch(self, query: str, *, exclude=(), limit: int = 3):
         from autodidact.knowledge.sources import normalize_url, publisher_key
 
@@ -71,6 +74,7 @@ class ResearchCollector:
                 break
         return docs
 
+    # 功能：重放文档后依据当前库内血缘重新过滤与排除集合同源的资料。
     async def filter_independent(self, docs, exclude):
         if not self.repo or not exclude:
             return docs

@@ -1,3 +1,4 @@
+# 文件职责：提供控制器互斥和 UTC 每日预算预留/结算，避免无界外部调用。
 """Durable admission budgets and database-wide single-writer ownership."""
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ class ControllerBusy(RuntimeError):
     pass
 
 
+# 功能：获取数据库级非阻塞控制器锁，在退出时释放；占用时抛出 ControllerBusy。
 @asynccontextmanager
 async def controller_lock(engine):
     async with engine.connect() as connection:
@@ -46,6 +48,7 @@ async def controller_lock(engine):
 class OperationBudget:
     """Reservations survive process interruption; day boundaries are UTC."""
 
+    # 功能：建立独立账本会话工厂，从学习配置读取每日资源上限。
     def __init__(self, engine):
         self.sessions = async_sessionmaker(engine, expire_on_commit=False)
         cfg = agent_config().learning
@@ -59,6 +62,7 @@ class OperationBudget:
             "estimated_usd": cfg.max_daily_estimated_cost_usd,
         }
 
+    # 功能：在预算事务锁下检查 UTC 当天用量并保存调用预留，超过上限则拒绝调用。
     async def reserve(self, charges: dict[str, float], details: dict | None = None):
         batch_id = uuid4()
         now = datetime.now(UTC)
@@ -100,6 +104,7 @@ class OperationBudget:
                 )
         return batch_id
 
+    # 功能：按批次更新完成/失败、实耗与详情；未知消耗保留预留估算以免低估费用。
     async def finish(
         self,
         batch_id,
@@ -127,10 +132,12 @@ class OperationBudget:
 
 
 class BudgetedSearch:
+    # 功能：给搜索提供方附加预算账本，不改变其查询协议。
     def __init__(self, inner, budget: OperationBudget):
         self.inner, self.budget = inner, budget
         self.provider_name = inner.provider_name
 
+    # 功能：先预留一次搜索，再调用并记录结果数量或错误；失败仍留下审计事件。
     async def search(self, query: str, limit: int = 5):
         batch = await self.budget.reserve({"searches": 1}, {"query": query[:500]})
         try:

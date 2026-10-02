@@ -1,3 +1,4 @@
+# 文件职责：提供仅回环地址可访问的研究工作台，操作目标/学习并基于接纳记忆解释问题。
 """Loopback-only workbench for goals, evidence, disputes and research questions."""
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ refresh();setInterval(refresh,10000);</script></html>"""
 
 
 class Workbench:
+    # 功能：保存端口、生成本地请求 Token，初始化学习任务与最近结果状态。
     def __init__(self, port):
         self.port = port
         self.token = secrets.token_urlsafe(32)
@@ -62,6 +64,7 @@ class Workbench:
         self.task = None
         self.job = {"status": "idle"}
 
+    # 功能：异步执行一轮学习并保存页面可见结果/异常，不创建独立认知数据库。
     async def learn(self):
         self.job = {"status": "running"}
         try:
@@ -73,6 +76,7 @@ class Workbench:
         except Exception as exc:  # noqa: BLE001 - keep the local interface available.
             self.job = {"status": "failed", "reason": type(exc).__name__}
 
+    # 功能：路由本地页面/API：状态、目标、学习控制及接纳记忆问答；解释不直接晋升信念。
     async def dispatch(self, path, method, body):
         async with SessionLocal() as session:
             repo = Repository(session)
@@ -186,6 +190,7 @@ class Workbench:
                     }
         raise ValueError("未知操作")
 
+    # 功能：解析有界 HTTP 请求并核对 Host/Origin/Token，发送带安全头响应后关闭连接。
     async def connection(self, reader, writer):
         try:
             header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10)
@@ -236,6 +241,7 @@ class Workbench:
         await writer.wait_closed()
 
 
+# 功能：初始化数据库并在 127.0.0.1 启动工作台服务，退出时处理本进程任务，不提供公网账号系统。
 async def serve(port=8765):
     await init_database()
     app = Workbench(port)

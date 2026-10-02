@@ -1,3 +1,4 @@
+# 文件职责：结合评估、开放争议、独立来源数量和质量控制信念晋升。
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ class PromotionDecision:
 
 
 class BeliefPromotionPolicy:
+    # 功能：校验 verified 所需独立来源数量及最小等级，保存晋升门槛。
     def __init__(
         self,
         min_independent_sources_for_verified: int,
@@ -31,6 +33,7 @@ class BeliefPromotionPolicy:
         self.min_independent_sources_for_verified = min_independent_sources_for_verified
         self.min_evidence_level_for_verified = min_evidence_level_for_verified
 
+    # 功能：评估失败/开放争议/无证据时拒绝晋升；合格独立证据不足仅允许非 verified 状态。
     def decide(
         self,
         *,

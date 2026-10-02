@@ -1,3 +1,4 @@
+# 文件职责：按日整合接纳记忆、失败模式与证据图，提出复核目标和候选研究技能。
 from __future__ import annotations
 
 import json
@@ -15,9 +16,11 @@ from autodidact.schemas import CandidateGoal
 
 
 class MemoryConsolidator:
+    # 功能：绑定认知仓库和方法提取模型，不在构造时修改记忆。
     def __init__(self, repo, llm):
         self.repo, self.llm = repo, llm
 
+    # 功能：按 UTC 日期幂等生成记忆报告，复核过旧信念并从多次成功反思提取待验证方法；不自动删旧认知。
     async def consolidate(self):
         day = datetime.now(UTC).date().isoformat()
         existing = await self.repo.get_report("memory_daily", day)

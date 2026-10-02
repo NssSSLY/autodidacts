@@ -1,3 +1,4 @@
+# 文件职责：用 HTTP/提供方替身检查 Brave 结果映射、认证和有序降级。
 from __future__ import annotations
 
 import httpx
@@ -12,8 +13,10 @@ from autodidact.tools.search import (
 )
 
 
+# 功能：验证 Brave 请求认证头及 JSON 结果映射，不使用真实搜索服务。
 @pytest.mark.asyncio
 async def test_brave_search_maps_structured_results_and_authenticates():
+    # 功能：断言模拟请求后返回预设搜索 JSON。
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["X-Subscription-Token"] == "secret"
         assert request.url.params["q"] == "visual inertial odometry"
@@ -49,6 +52,7 @@ async def test_brave_search_maps_structured_results_and_authenticates():
 
 
 class StubSearchProvider(SearchProvider):
+    # 功能：保存预设结果/错误及调用计数，构造搜索提供方替身。
     def __init__(
         self,
         name: str,
@@ -61,6 +65,7 @@ class StubSearchProvider(SearchProvider):
         self.error = error
         self.calls = 0
 
+    # 功能：累计请求次数并返回预设结果或错误，模拟提供方成功/失败。
     async def search(self, query: str, limit: int = 5) -> list[SearchHit]:
         self.calls += 1
         if self.error:
@@ -68,6 +73,7 @@ class StubSearchProvider(SearchProvider):
         return self.hits[:limit]
 
 
+# 功能：验证前一提供方失败时继续调用下一提供方。
 @pytest.mark.asyncio
 async def test_fallback_search_uses_next_provider_after_failure():
     primary = StubSearchProvider("primary", error=httpx.ConnectError("offline"))
@@ -81,6 +87,7 @@ async def test_fallback_search_uses_next_provider_after_failure():
     assert fallback.calls == 1
 
 
+# 功能：验证全链失败时返回包含各失败原因的异常。
 @pytest.mark.asyncio
 async def test_fallback_search_reports_all_provider_failures():
     provider = FallbackSearchProvider(

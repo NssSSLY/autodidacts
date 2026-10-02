@@ -1,3 +1,4 @@
+# 文件职责：在实际学习运行时检查可选 Day 0/7/14/21/30 冻结基准里程碑。
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -8,6 +9,7 @@ from autodidact.config import runtime_settings
 from autodidact.experiments import canonical_hash, evaluate_suite
 
 
+# 功能：按当前实际日龄选择里程碑，幂等比较无记忆/有记忆并保存快照，不补造错过日期的数据。
 async def scheduled_benchmarks(repo, learner, judge):
     """Optional Day 0/7/14/21/30 paired experiments; never invent missing milestones."""
     benchmark_id = runtime_settings().benchmark_snapshot_id

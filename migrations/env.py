@@ -1,3 +1,4 @@
+# 文件职责：提供 Alembic 离线 SQL 与异步/已注入连接的在线迁移执行环境。
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+# 功能：按配置 URL 生成迁移 SQL，不连接数据库也不证明实际升级已通过。
 def run_migrations_offline() -> None:
     context.configure(
         url=config.get_main_option("sqlalchemy.url"),
@@ -32,6 +34,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+# 功能：在给定同步连接上配置 ORM 比较并运行 revision 事务。
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
@@ -43,6 +46,7 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+# 功能：创建临时异步迁移 engine，以同步桥接执行后释放连接资源。
 async def run_async_migrations() -> None:
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
@@ -56,6 +60,7 @@ async def run_async_migrations() -> None:
     await connectable.dispose()
 
 
+# 功能：优先使用应用注入连接，否则启动独立异步在线迁移。
 def run_migrations_online() -> None:
     supplied_connection = config.attributes.get("connection")
     if supplied_connection is not None:

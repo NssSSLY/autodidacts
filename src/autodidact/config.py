@@ -1,3 +1,4 @@
+# 文件职责：读取 .env/环境变量与 YAML，校验模型、身份、预算、来源和安全配置。
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -99,11 +100,13 @@ class AgentConfig(BaseModel):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
 
 
+# 功能：缓存运行配置读取结果，供提供方与数据库使用统一环境设置。
 @lru_cache
 def runtime_settings() -> RuntimeSettings:
     return RuntimeSettings()
 
 
+# 功能：按 AGENT_CONFIG 路径读取并校验策略 YAML，缓存为 AgentConfig。
 @lru_cache
 def agent_config() -> AgentConfig:
     path = Path(runtime_settings().agent_config)

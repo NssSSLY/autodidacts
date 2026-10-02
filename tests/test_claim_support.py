@@ -1,3 +1,4 @@
+# 文件职责：检查引文是否能逐字定位到已读来源，拒绝伪造或未读 URL。
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -6,6 +7,7 @@ from autodidact.knowledge.sources import normalize_url
 from autodidact.schemas import ClaimCitation, ClaimDraft
 
 
+# 功能：验证逐字引文获得 anchored 状态并关联实际来源 ID。
 def test_verbatim_citation_is_anchored_to_read_source():
     url = "https://example.org/report?utm_source=test"
     source = SimpleNamespace(
@@ -30,6 +32,7 @@ def test_verbatim_citation_is_anchored_to_read_source():
     assert result.records[0].status == "anchored"
 
 
+# 功能：验证未读来源或不匹配引文不能提供合格来源身份。
 def test_unread_or_nonverbatim_citation_cannot_supply_claim_source_id():
     source = SimpleNamespace(id=uuid4(), extracted_text="A short factual source paragraph.")
     draft = ClaimDraft(

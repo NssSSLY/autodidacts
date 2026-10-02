@@ -1,3 +1,4 @@
+# 文件职责：注册目标、记忆、技能、模型比较、索引、导入、网页模型与工作台 CLI。
 """Incremental CLI entry points for persistent learning and experiments."""
 
 from __future__ import annotations
@@ -29,15 +30,19 @@ from autodidact.runtime import controller_lock
 from autodidact.schemas import CandidateGoal
 
 
+# 功能：先升级数据库，再在控制器互斥和会话内执行 CLI 操作，提供仓库与被审计模型。
 async def controlled(action):
     await init_database()
     async with controller_lock(engine), SessionLocal() as session:
         return await action(Repository(session), ObservedLLM(build_llm(), engine))
 
 
+# 功能：把增量操作函数注册到 Typer；注册过程不执行实际学习任务。
 def register_commands(app):
+    # 功能：将人工标题和描述转为高优先级目标，去重保存并返回 ID。
     @app.command("add-goal")
     def add_goal(title: str, description: str = ""):
+        # 功能：在受控数据库操作中将人工标题和描述转为高优先级目标，去重保存并返回 ID。
         async def action(repo, llm):
             goal = CandidateGoal(
                 title=title, description=description, source="human", importance=0.9
@@ -47,22 +52,28 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：触发 UTC 当日记忆整合，输出报告 ID 和候选方法统计。
     @app.command("consolidate")
     def consolidate():
+        # 功能：在受控数据库操作中触发 UTC 当日记忆整合，输出报告 ID 和候选方法统计。
         async def action(repo, llm):
             return await MemoryConsolidator(repo, llm).consolidate()
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：刷新模型观察/评估经验 Profile，返回更新数量。
     @app.command("refresh-profiles")
     def refresh_profiles():
+        # 功能：在受控数据库操作中刷新模型观察/评估经验 Profile，返回更新数量。
         async def action(repo, llm):
             return {"profiles": await repo.refresh_model_profiles()}
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：校验文件题集并冻结内容，返回基准 ID、摘要与题数。
     @app.command("freeze-benchmark")
     def freeze_benchmark(path: str = "data/benchmark/sample.json"):
+        # 功能：在受控数据库操作中校验文件题集并冻结内容，返回基准 ID、摘要与题数。
         async def action(repo, llm):
             report = await freeze_suite(repo, path)
             return {
@@ -73,8 +84,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：加载指定冻结基准，按是否允许接纳记忆执行评估并保存报告。
     @app.command("evaluate-benchmark")
     def evaluate_benchmark(benchmark_id: str, use_memory: bool = False):
+        # 功能：在受控数据库操作中加载指定冻结基准，按是否允许接纳记忆执行评估并保存报告。
         async def action(repo, llm):
             suite = await repo.s.get(models.ResearchReport, UUID(benchmark_id))
             if suite is None or suite.kind != "frozen_benchmark":
@@ -88,8 +101,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：构造旧/新审计模型，在相同冻结题集和记忆上执行四组比较，不自动切换。
     @app.command("compare-models")
     def compare_models(benchmark_id: str, old_model: str, new_model: str, new_base_url: str = ""):
+        # 功能：在受控数据库操作中构造旧/新审计模型，在相同冻结题集和记忆上执行四组比较，不自动切换。
         async def action(repo, llm):
             settings = runtime_settings()
             old = ObservedLLM(
@@ -116,15 +131,19 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：在独立冻结题上比较指定研究方法并更新候选/验证状态。
     @app.command("validate-skill")
     def validate_skill_command(skill_id: str, benchmark_id: str):
+        # 功能：在受控数据库操作中在独立冻结题上比较指定研究方法并更新候选/验证状态。
         async def action(repo, llm):
             return await validate_skill(repo, llm, build_judge(engine), skill_id, benchmark_id)
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：列出已保存技能的名称、置信度、状态和验证 metadata。
     @app.command("skills")
     def skills():
+        # 功能：在受控数据库操作中列出已保存技能的名称、置信度、状态和验证 metadata。
         async def action(repo, llm):
             rows = (
                 await repo.s.scalars(select(models.Skill).order_by(models.Skill.created_at.desc()))
@@ -141,8 +160,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：汇总指定天数的成长/资源数据并保存 progress 报告。
     @app.command("report")
     def report(days: int = typer.Option(30, min=1, max=365)):
+        # 功能：在受控数据库操作中汇总指定天数的成长/资源数据并保存 progress 报告。
         async def action(repo, llm):
             payload = await longitudinal_report(repo, days)
             saved = await repo.save_report("progress", payload)
@@ -150,8 +171,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：读取指定报告 ID 的类型与完整载荷，报告不存在时提示错误。
     @app.command("show-report")
     def show_report(report_id: str):
+        # 功能：在受控数据库操作中读取指定报告 ID 的类型与完整载荷，报告不存在时提示错误。
         async def action(repo, llm):
             stored = await repo.s.get(models.ResearchReport, UUID(report_id))
             if stored is None:
@@ -160,8 +183,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：为已有开放争议补排关联调查目标，不直接裁定争议。
     @app.command("queue-disputes")
     def queue_disputes():
+        # 功能：在受控数据库操作中为已有开放争议补排关联调查目标，不直接裁定争议。
         async def action(repo, llm):
             ids = []
             for dispute in await repo.open_disputes():
@@ -179,8 +204,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：分批重建非撤回信念的缺失/旧指纹向量，--force 可覆盖当前向量。
     @app.command("rebuild-embeddings")
     def rebuild_embeddings(limit: int = typer.Option(100, min=1, max=10000), force: bool = False):
+        # 功能：在受控数据库操作中分批重建非撤回信念的缺失/旧指纹向量，--force 可覆盖当前向量。
         async def action(repo, llm):
             from autodidact.embedding_runtime import RecordedEmbedding
             from autodidact.embeddings import build_embedding_provider
@@ -208,14 +235,17 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：在指定本地端口启动研究工作台，不开启公网监听。
     @app.command("serve")
     def serve_command(port: int = typer.Option(8765, min=1024, max=65535)):
         from autodidact.workbench import serve
 
         asyncio.run(serve(port))
 
+    # 功能：读取本地材料，保存等级 1 来源并创建关联学习目标，不直接生成 verified 信念。
     @app.command("import-document")
     def import_document(path: str):
+        # 功能：在受控数据库操作中读取本地材料，保存等级 1 来源并创建关联学习目标，不直接生成 verified 信念。
         async def action(repo, llm):
             from autodidact.tools.documents import read_local_document
             from autodidact.tools.reader import WebReader
@@ -235,8 +265,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：向指定合法配置网页模型提问，保存观察并明确输出等级 0。
     @app.command("web-ask")
     def web_ask(provider: str, prompt: str):
+        # 功能：在受控数据库操作中向指定合法配置网页模型提问，保存观察并明确输出等级 0。
         async def action(repo, llm):
             from autodidact.web_models.service import WebModelService
 

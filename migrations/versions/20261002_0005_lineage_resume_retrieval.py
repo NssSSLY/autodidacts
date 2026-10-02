@@ -1,3 +1,4 @@
+# 文件职责：增加来源依赖、学习工作项和三实体派生检索索引。
 """Add source dependency graph, durable work items and rebuildable hybrid index."""
 
 import sqlalchemy as sa
@@ -11,6 +12,7 @@ branch_labels = None
 depends_on = None
 
 
+# 功能：创建 source_links、learning_steps、retrieval_entries 及唯一/GIN/HNSW 索引，保留核心认知表。
 def upgrade():
     op.create_table(
         "source_links",
@@ -71,6 +73,7 @@ def upgrade():
     )
 
 
+# 功能：删除本次三个新表；派生索引可重建，但历史血缘/成功工作项需备份才可恢复。
 def downgrade():
     # Export these new records before downgrade; original learning tables are untouched.
     op.drop_table("retrieval_entries")

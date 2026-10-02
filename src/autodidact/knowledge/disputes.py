@@ -1,3 +1,4 @@
+# 文件职责：定义四结果争议决议协议，用数据库支持证据约束模型提议。
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ class DisputeRecord(Protocol):
 
 
 class DisputeRepository(Protocol):
+    # 功能：声明仓库必须返回与指定结论关联且合格的证据来源，不接受裸 ID 当作证明。
     async def qualified_resolution_sources(
         self,
         dispute: object,
@@ -22,6 +24,7 @@ class DisputeRepository(Protocol):
         requested_source_ids: list[str],
     ) -> list[EvidenceSource]: ...
 
+    # 功能：声明仓库负责在事务内保存决议、结论、证据与历史。
     async def apply_dispute_resolution(
         self,
         dispute: object,
@@ -51,11 +54,13 @@ class ResolutionDecision:
 class DisputeResolutionPolicy:
     """Gate resolution proposals with independently anchored evidence."""
 
+    # 功能：校验解决争议所需独立来源最小数。
     def __init__(self, min_independent_sources: int = 2):
         if min_independent_sources < 1:
             raise ValueError("min_independent_sources must be at least 1")
         self.min_independent_sources = min_independent_sources
 
+    # 功能：校验决议结果、说明、条件与独立支持来源；证据不足拒绝选边，未解决无需强造结论。
     def decide(
         self,
         dispute: DisputeRecord,
@@ -98,10 +103,12 @@ class DisputeResolutionPolicy:
 class DisputeResolver:
     """Applies one of four evidence-gated outcomes; never trusts a proposal alone."""
 
+    # 功能：绑定决议策略和持久仓库，分离提议核验与事务写入。
     def __init__(self, repository: DisputeRepository, policy: DisputeResolutionPolicy):
         self.repository = repository
         self.policy = policy
 
+    # 功能：从数据库核实提议来源，策略允许后提交四结果决议，模型不能绕过证据门槛。
     async def resolve(
         self,
         dispute: DisputeRecord,

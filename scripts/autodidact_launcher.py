@@ -1,3 +1,4 @@
+# 文件职责：作为 EXE 入口分离用户配置与程序资源；默认启动本地工作台。
 """Installed program entry point; user configuration stays outside the bundle."""
 
 import os
@@ -8,6 +9,7 @@ from pathlib import Path
 from autodidact.resources import resource_root
 
 
+# 功能：EXE 模式只补不存在的用户配置并切换工作目录，无参数时运行 serve；源码模式直接转交 CLI。
 def main():
     if getattr(sys, "frozen", False):
         destination = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Autodidact"

@@ -1,3 +1,4 @@
+# 文件职责：使用人工已登录的浏览器资料与站点选择器读取网页模型回答，不自动登录或绕过验证。
 from __future__ import annotations
 
 import asyncio
@@ -26,9 +27,11 @@ class WebModelConfig(BaseModel):
 class PlaywrightWebModelAdapter(ExternalCognitiveSource):
     """Generic UI adapter. It does not log in, bypass CAPTCHA, or evade anti-bot controls."""
 
+    # 功能：保存网页 URL、选择器、浏览器资料路径与超时配置。
     def __init__(self, config: WebModelConfig):
         self.config = config
 
+    # 功能：打开配置页面检查输入框是否存在；浏览器/网站失败返回 False，不绕过障碍。
     async def health_check(self) -> bool:
         try:
             async with async_playwright() as p:
@@ -45,6 +48,7 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
         except Exception:  # noqa: BLE001
             return False
 
+    # 功能：通过配置 UI 输入问题并等待回答完成，收集正文/引用作为等级 0 观察，最后关闭上下文。
     async def ask(self, prompt: str) -> ModelAnswer:
         async with async_playwright() as p:
             ctx = await p.chromium.launch_persistent_context(

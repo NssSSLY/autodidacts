@@ -1,3 +1,4 @@
+# 文件职责：处理非晋升规则的运行持久状态：恢复、检查点、报告、模型统计和技能使用结果。
 """Operational persistence, separated from epistemic promotion rules."""
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from autodidact.enums import GoalStatus
 
 
 class LearningState:
+    # 功能：控制器持锁时标记中断；新协议保留原尝试续跑，旧协议结束尝试并增加有界重试。
     async def recover_interrupted(self):
         """Called only with database-wide controller ownership.
 
@@ -66,6 +68,7 @@ class LearningState:
         await self.s.commit()
         return len(goals)
 
+    # 功能：按创建时间选择最早未完成且未阻断的 durable_replay_v1 会话。
     async def resumable_attempt(self):
         return await self.s.scalar(
             select(models.LearningSession)
@@ -79,6 +82,7 @@ class LearningState:
             .limit(1)
         )
 
+    # 功能：合并并提交阶段名与载荷，供崩溃恢复和人工排查使用。
     async def checkpoint(self, attempt, stage: str, **payload):
         previous = attempt.result or {}
         stages = list(previous.get("checkpoints", []))
@@ -87,6 +91,7 @@ class LearningState:
         attempt.result = {**previous, **payload, "checkpoint": stage, "checkpoints": stages}
         await self.s.commit()
 
+    # 功能：返回 supported/verified 且无开放争议的记忆快照，供工作台和实验使用。
     async def accepted_memory(self, limit=200):
         has_dispute = exists(
             select(models.Dispute.id).where(
@@ -116,6 +121,7 @@ class LearningState:
             for b in rows
         ]
 
+    # 功能：按报告类型和稳定键查找已有报告，支持日整合与基准幂等。
     async def get_report(self, kind, key):
         return await self.s.scalar(
             select(models.ResearchReport).where(
@@ -124,6 +130,7 @@ class LearningState:
             )
         )
 
+    # 功能：按类型/键复用或保存报告，未给键时生成独立报告标识。
     async def save_report(self, kind, payload, key=None):
         key = key or str(uuid4())
         # Makes daily snapshots safe across repeated commands and interrupted processes.
@@ -138,6 +145,7 @@ class LearningState:
         await self.s.refresh(report)
         return report
 
+    # 功能：汇总模型观察、错误和评估/基准记录，更新经验统计而非宣布模型绝对可信。
     async def refresh_model_profiles(self):
         observations = (await self.s.scalars(select(models.ModelObservation))).all()
         evaluations = (await self.s.scalars(select(models.Evaluation))).all()
@@ -213,6 +221,7 @@ class LearningState:
         await self.s.commit()
         return len(groups)
 
+    # 功能：统计 UTC 当天非人工目标，计算剩余自主目标配额。
     async def goal_quota_remaining(self):
         now = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
         generated = await self.s.scalar(
@@ -225,6 +234,7 @@ class LearningState:
         )
         return max(0, agent_config().learning.daily_goal_limit - generated)
 
+    # 功能：读取开放、调查中或未解决争议，按时间排序并限制数量。
     async def open_disputes(self, limit=20):
         return list(
             (
@@ -237,6 +247,7 @@ class LearningState:
             ).all()
         )
 
+    # 功能：按触发文本和置信度选择已经独立验证的技能，候选技能不进入自动规划。
     async def selected_skills(self, title, limit=2):
         rows = (await self.s.scalars(select(models.Skill))).all()
         terms = set(title.casefold().split())
@@ -251,6 +262,7 @@ class LearningState:
         ]
         return sorted(eligible, key=lambda s: s.confidence, reverse=True)[:limit]
 
+    # 功能：拼接指定 Claim/Source 的 supported 原文片段，供决议证据保留真实引用。
     async def supported_excerpt(self, claim_id, source_id):
         passages = (
             await self.s.scalars(
@@ -263,6 +275,7 @@ class LearningState:
         ).all()
         return "\n".join(passages)
 
+    # 功能：更新本次使用技能的成功/失败计数与经验置信度，通过会话标记防止重复计数。
     async def record_skill_outcome(self, skill_ids, passed, attempt=None):
         if attempt and (attempt.result or {}).get("skills_recorded"):
             return

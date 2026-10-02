@@ -1,3 +1,4 @@
+# 文件职责：集中定义目标、信念、争议、来源访问和证据立场状态名。
 from enum import StrEnum
 
 

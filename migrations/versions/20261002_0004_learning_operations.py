@@ -1,3 +1,4 @@
+# 文件职责：增加持久预算事件、研究报告和技能验证 metadata，不删除旧认知。
 """Add durable operations, research reports and skill validation metadata.
 
 Revision ID: 20261002_0004
@@ -14,6 +15,7 @@ branch_labels = None
 depends_on = None
 
 
+# 功能：创建 operation_events/research_reports，给技能增加空 metadata 默认值。
 def upgrade() -> None:
     op.create_table(
         "operation_events",
@@ -56,6 +58,7 @@ def upgrade() -> None:
     )
 
 
+# 功能：删除预算/报告表及技能 metadata，会丢失冻结实验和费用审计记录。
 def downgrade() -> None:
     # Removing these objects also removes the new audit records; back them up first.
     op.drop_column("skills", "metadata_json")

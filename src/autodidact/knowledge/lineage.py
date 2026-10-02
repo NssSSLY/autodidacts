@@ -1,3 +1,4 @@
+# 文件职责：从网页声明和观察提取来源依赖并持久化，传递合并同源而不提高质量等级。
 """可审计的来源依赖图；网页声明只能降低独立性，不能提高证据等级。"""
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from autodidact.knowledge.sources import EvidenceSource, normalize_url, publishe
 DEPENDENCIES = {"canonical", "redirect", "same_work", "reprint", "derived_from", "identical"}
 
 
+# 功能：将相对血缘链接转绝对 HTTP(S) URL，限制长度和凭据并统一 DOI 身份；不直接访问目标。
 def safe_target(base, value):
     if not isinstance(value, str) or len(value) > 2000:
         return ""
@@ -28,9 +30,11 @@ def safe_target(base, value):
     return normalize_url(target)
 
 
+# 功能：提取重定向、canonical、DOI/JSON-LD 和显式转载/引用信号，依赖与普通引用分开。
 def extract_lineage(soup, url, requested_url=None):
     links = []
 
+    # 功能：将单个合法链接与关系加入有数量上限的血缘列表，保留声明信号。
     def add(value, relation, signal):
         target = safe_target(url, value)
         if target and target != normalize_url(url) and len(links) < 100:
@@ -134,9 +138,11 @@ def extract_lineage(soup, url, requested_url=None):
 
 
 class SourceLineage:
+    # 功能：绑定异步数据库会话，用于来源边和依赖查询。
     def __init__(self, session):
         self.s = session
 
+    # 功能：将已取得的血缘信号/同内容别名去重写成 SourceLink，不主动沿链接爬取。
     async def record(self, source, doc):
         links = list(doc.metadata.get("lineage_links", []))
         for target, relation in [(doc.lineage_key, "canonical"), (source.url, "identical")]:
@@ -174,6 +180,7 @@ class SourceLineage:
                 .on_conflict_do_nothing(constraint="uq_source_links_relation")
             )
 
+    # 功能：有界计算依赖边的无向传递闭包以识别同源链/环；普通 cites 不合并，截断保守处理。
     async def dependency_keys(self, urls):
         """Undirected transitive closure catches shared origins and cycles, without crawling.
 
@@ -228,6 +235,7 @@ class SourceLineage:
             result[seed] = frozenset(component)
         return result
 
+    # 功能：把 Source 实体及依赖键转换成 EvidenceSource，供晋升与决议独立性计算。
     async def evidence_sources(self, rows):
         urls = [s.normalized_url or s.url for s in rows]
         urls += [(s.metadata_json or {}).get("lineage_key", "") for s in rows]

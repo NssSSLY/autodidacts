@@ -17,7 +17,7 @@ Autodidact 面向限定领域的长期研究：自主维护目标、检索独立
 | 每次开发过程与增量 | [开发记录](doc/05开发过程与增量记录.md) |
 | 后续计划与初始构想 | [计划与构想](doc/06后续开发计划与构想.md) |
 
-技术结构：[ARCHITECTURE.md](ARCHITECTURE.md)；开发约束：[AGENTS.md](AGENTS.md)；开发入口：[CODEX_BUILD_PROMPT.md](CODEX_BUILD_PROMPT.md)；迁移：[migrations/README.md](migrations/README.md)。
+技术结构、逐文件职责与阅读路径：[ARCHITECTURE.md](ARCHITECTURE.md)；开发约束：[AGENTS.md](AGENTS.md)；开发入口：[CODEX_BUILD_PROMPT.md](CODEX_BUILD_PROMPT.md)；迁移：[migrations/README.md](migrations/README.md)。
 
 [原始完整会话交接稿](Autodidact_Full_Conversation_Codex_Handoff.md)保留架构和要求历史；[归档旧稿](doc/归档/README.md)保留独有讨论。历史稿不是最新完成度或操作指南。
 
@@ -60,4 +60,4 @@ EXE 配方、服务器运行、原生数据库、备份恢复和完整命令见�
 
 外部资料是不受信任的数据，不能成为控制器指令。不得绕过 CAPTCHA/反爬、提取凭据、自主提权、无人值守支付或自主修改核心代码。新模型不能只凭不同意见覆盖高置信旧信念。
 
-最近功能基线：d7f6583（2026-10-03）；迁移 HEAD：20261002_0005。本次文档整理未运行测试、数据库迁移、付费学习或 EXE 构建。2026-09-24 的 58 passed / 2 skipped 仅为历史结果；当前新增链路需单独验收。
+最近功能基线：d7f6583（2026-10-03）；迁移 HEAD：20261002_0005。后续仅补文档及中文注释，AST 未变、编译和静态检查通过；注释前后 pytest 均为 56 passed / 2 failed / 2 skipped，两项既有失败来自争议事务测试替身缺 scalars。未运行在线库迁移、付费学习或 EXE 构建。旧 58 passed / 2 skipped 不代表当前结果，细节见开发记录。

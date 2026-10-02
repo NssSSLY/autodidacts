@@ -1,3 +1,4 @@
+# 文件职责：定义 19 个持久业务表、外键、唯一约束和向量字段。
 from __future__ import annotations
 
 from datetime import datetime
@@ -24,6 +25,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from autodidact.db import Base
 
 
+# 功能：构造带 UUID 默认生成器的主键映射列，统一各业务表 ID 定义。
 def uuid_pk() -> Mapped[UUID]:
     return mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 

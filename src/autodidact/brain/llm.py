@@ -1,3 +1,4 @@
+# 文件职责：统一可替换模型的文本/结构化接口，提供 Mock 和兼容 API 实现。
 from __future__ import annotations
 
 import json
@@ -16,10 +17,12 @@ class LLM(ABC):
     provider_name: str
     model_name: str
 
+    # 功能：声明异步文本生成协议，由具体模型实现，不自行授予输出证据等级。
     @abstractmethod
     async def text(self, system: str, user: str, *, temperature: float | None = None) -> str:
         raise NotImplementedError
 
+    # 功能：给提示附加 schema，清理 JSON 围栏并由 Pydantic 校验结果，格式错误向调用者报告。
     async def structured(self, system: str, user: str, schema: type[T]) -> T:
         instruction = (
             user
@@ -40,9 +43,11 @@ class MockLLM(LLM):
     provider_name = "mock"
     model_name = "mock-v0"
 
+    # 功能：返回固定演示提示，不产生真实学习内容或远端请求。
     async def text(self, system: str, user: str, *, temperature: float | None = None) -> str:
         return "Mock provider active. Configure an LLM provider for real learning."
 
+    # 功能：按 schema 返回确定性演示数据；未知协议报错，不能用于证明学习效果。
     async def structured(self, system: str, user: str, schema: type[T]) -> T:
         # Minimal deterministic fixtures for smoke tests and first boot.
         name = schema.__name__
@@ -126,6 +131,7 @@ class MockLLM(LLM):
 class OpenAICompatibleLLM(LLM):
     """Works with services exposing the common /chat/completions request shape."""
 
+    # 功能：校验模型名和密钥，保存兼容服务地址、采样和输出 Token 上限。
     def __init__(self, settings: RuntimeSettings):
         if not settings.llm_api_key or not settings.llm_model:
             raise ValueError("LLM_API_KEY and LLM_MODEL are required")
@@ -137,6 +143,7 @@ class OpenAICompatibleLLM(LLM):
         self.max_output_tokens = settings.llm_max_output_tokens
         self.last_usage: dict = {}
 
+    # 功能：调用兼容 chat/completions 服务并记录 usage；HTTP/解析失败交给上层处理。
     async def text(self, system: str, user: str, *, temperature: float | None = None) -> str:
         self.last_usage = {}
         payload: dict[str, Any] = {
@@ -159,6 +166,7 @@ class OpenAICompatibleLLM(LLM):
         return data["choices"][0]["message"]["content"]
 
 
+# 功能：依据运行配置构造 Mock 或兼容 API 模型，未知提供方拒绝启动。
 def build_llm() -> LLM:
     s = runtime_settings()
     if s.llm_provider == "mock":

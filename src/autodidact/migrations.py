@@ -1,3 +1,4 @@
+# 文件职责：识别已知旧库结构并串行 Alembic 升级，拒绝不完整或未知状态的自动 stamp。
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -45,6 +46,7 @@ MigrationAction = Literal[
 ]
 
 
+# 功能：定位源码/安装包迁移资源，注入运行 DATABASE_URL 并转义配置百分号。
 def alembic_config() -> Config:
     config = Config(str(ALEMBIC_INI))
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
@@ -54,6 +56,7 @@ def alembic_config() -> Config:
     return config
 
 
+# 功能：取得当前 ORM 元数据的表/列集合，供已知结构比较。
 def expected_schema_columns() -> dict[str, set[str]]:
     return {
         table.name: {column.name for column in table.columns}
@@ -61,6 +64,7 @@ def expected_schema_columns() -> dict[str, set[str]]:
     }
 
 
+# 功能：从后续结构扣除来源质量字段，重建 0001 基线的预期列集合。
 def baseline_schema_columns() -> dict[str, set[str]]:
     baseline = source_provenance_schema_columns()
     for table_name, column_names in POST_BASELINE_COLUMNS.items():
@@ -68,6 +72,7 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
+# 功能：从当前结构去除 0005 新表，得到 0004 的预期表列集合。
 def operational_schema_columns() -> dict[str, set[str]]:
     return {
         name: set(values)
@@ -76,6 +81,7 @@ def operational_schema_columns() -> dict[str, set[str]]:
     }
 
 
+# 功能：从 0004 结构去除预算/报告及技能 metadata，得到 0003 的预期表列集合。
 def epistemic_schema_columns() -> dict[str, set[str]]:
     columns = {
         name: set(values)
@@ -86,6 +92,7 @@ def epistemic_schema_columns() -> dict[str, set[str]]:
     return columns
 
 
+# 功能：从 0003 结构去除主张锚点与幂等字段，得到 0002 预期表列集合。
 def source_provenance_schema_columns() -> dict[str, set[str]]:
     source_provenance = epistemic_schema_columns()
     for table_name, column_names in POST_SOURCE_PROVENANCE_COLUMNS.items():
@@ -95,6 +102,7 @@ def source_provenance_schema_columns() -> dict[str, set[str]]:
     return source_provenance
 
 
+# 功能：对空库、已版本化或完整已知旧表列选择升级/stamp 路径；未知部分结构拒绝处理。
 def decide_initialization_action(
     existing_columns: Mapping[str, AbstractSet[str]],
 ) -> MigrationAction:
@@ -151,6 +159,7 @@ def decide_initialization_action(
     raise AssertionError("unreachable schema comparison")
 
 
+# 功能：通过 SQLAlchemy Inspector 读取实际表与列名；不宣称验证全部类型/索引/数据。
 def _existing_columns(connection: Connection) -> dict[str, set[str]]:
     inspector = inspect(connection)
     return {
@@ -159,6 +168,7 @@ def _existing_columns(connection: Connection) -> dict[str, set[str]]:
     }
 
 
+# 功能：按识别结果标记已知旧 revision，再使用同一连接执行 Alembic upgrade head。
 def _run_upgrade(connection: Connection, config: Config) -> None:
     config.attributes["connection"] = connection
     action = decide_initialization_action(_existing_columns(connection))
@@ -175,6 +185,7 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
     command.upgrade(config, "head")
 
 
+# 功能：在迁移事务锁下读取实际结构并升级，不删除已有核心学习记录。
 async def upgrade_database(engine: AsyncEngine) -> None:
     """Upgrade a fresh, Alembic-managed, or verified legacy database to head."""
     config = alembic_config()

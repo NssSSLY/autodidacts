@@ -1,3 +1,4 @@
+# 文件职责：创建初始 13 个认知表与 pgvector 扩展；这是不可改写的历史迁移。
 """建立 Autodidact V0.1 初始数据结构。
 
 Revision ID: 20260914_0001
@@ -17,10 +18,12 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+# 功能：生成统一 UUID 主键列定义，供初始表创建使用。
 def _uuid_column() -> sa.Column:
     return sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False)
 
 
+# 功能：在空库建立 vector 扩展及初始认知表/约束，不是对已有表执行清空。
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
@@ -225,6 +228,7 @@ def upgrade() -> None:
     )
 
 
+# 功能：撤销初始业务表；会删除核心学习数据，执行前必须有备份和明确授权。
 def downgrade() -> None:
     op.drop_table("model_profiles")
     op.drop_table("evaluations")

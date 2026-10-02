@@ -1,3 +1,4 @@
+# 文件职责：定义 PyInstaller 资源、隐藏模块和文件夹发布结构，不打包真实密钥、学习数据库或 Chromium 用户资料。
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 

@@ -1,3 +1,4 @@
+# 文件职责：注册三实体检索、来源血缘回填和持久学习会话检查/恢复 CLI。
 """来源血缘、持久检查点与混合检索的人工可见入口。"""
 
 from __future__ import annotations
@@ -20,15 +21,19 @@ from autodidact.retrieval import HybridRetriever
 from autodidact.schemas import SourceDocument
 
 
+# 功能：注册检索、血缘和续跑维护命令，不在注册时连接外部服务。
 def register_advanced_commands(app):
+    # 功能：按批次回填 Goal/Claim/Belief 派生索引，可选计算向量并返回进度。
     @app.command("rebuild-retrieval")
     def rebuild_retrieval(limit: int = typer.Option(200, min=1, max=10000), vectors: bool = False):
+        # 功能：在受控数据库操作中按批次回填 Goal/Claim/Belief 派生索引，可选计算向量并返回进度。
         async def action(repo, llm):
             embedding = RecordedEmbedding(build_embedding_provider(), engine) if vectors else None
             return await repo.index.rebuild(embedding, limit=limit)
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：校验实体类型与数量后进行混合召回，明确排序分数不是可信度。
     @app.command("search-memory")
     def search_memory(
         query: str,
@@ -39,6 +44,7 @@ def register_advanced_commands(app):
         if kind not in {"all", "belief", "claim", "goal"}:
             raise typer.BadParameter("kind应为all / belief / claim / goal")
 
+        # 功能：在受控数据库操作中校验实体类型与数量后进行混合召回，明确排序分数不是可信度。
         async def action(repo, llm):
             hits = await HybridRetriever(
                 repo, RecordedEmbedding(build_embedding_provider(), engine)
@@ -55,8 +61,10 @@ def register_advanced_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：查询已有 URL 的依赖闭包和血缘边，最多显示 500 条边而不抓取新网页。
     @app.command("source-lineage")
     def source_lineage(url: str):
+        # 功能：在受控数据库操作中查询已有 URL 的依赖闭包和血缘边，最多显示 500 条边而不抓取新网页。
         async def action(repo, llm):
             key = normalize_url(url)
             components = await repo.lineage.dependency_keys([key])
@@ -86,8 +94,10 @@ def register_advanced_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：从旧 Source metadata 分批回填依赖边和版本标记，不猜测缺失血缘。
     @app.command("rebuild-lineage")
     def rebuild_lineage(limit: int = typer.Option(200, min=1, max=10000)):
+        # 功能：在受控数据库操作中从旧 Source metadata 分批回填依赖边和版本标记，不猜测缺失血缘。
         async def action(repo, llm):
             # Metadata marker also handles sources with zero outgoing edges; batches advance.
             rows = (
@@ -129,8 +139,10 @@ def register_advanced_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：列出未完成会话的协议、阶段、工作项数及恢复错误，供人工排查。
     @app.command("checkpoints")
     def checkpoints(limit: int = typer.Option(20, min=1, max=100)):
+        # 功能：在受控数据库操作中列出未完成会话的协议、阶段、工作项数及恢复错误，供人工排查。
         async def action(repo, llm):
             rows = (
                 await repo.s.scalars(
@@ -162,8 +174,10 @@ def register_advanced_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：人工结束旧未完成尝试并按当前配置重新排队，保留证据/工作项/预算历史。
     @app.command("restart-session")
     def restart_session(session_id: str):
+        # 功能：在受控数据库操作中人工结束旧未完成尝试并按当前配置重新排队，保留证据/工作项/预算历史。
         async def action(repo, llm):
             attempt = await repo.s.get(models.LearningSession, UUID(session_id))
             if not attempt or attempt.completed_at:
@@ -187,8 +201,10 @@ def register_advanced_commands(app):
 
         print(asyncio.run(controlled(action)))
 
+    # 功能：清除新协议会话的续跑阻断并重新可调度，仍需保持兼容的原配置。
     @app.command("retry-session")
     def retry_session(session_id: str):
+        # 功能：在受控数据库操作中清除新协议会话的续跑阻断并重新可调度，仍需保持兼容的原配置。
         async def action(repo, llm):
             attempt = await repo.s.get(models.LearningSession, UUID(session_id))
             if (

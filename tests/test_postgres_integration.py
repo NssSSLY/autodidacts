@@ -1,3 +1,4 @@
+# 文件职责：仅在显式 *_test 数据库内临时 schema 验证升级、并发唯一约束和向量召回。
 """在线集成验证：只对显式指定的、可丢弃的 *_test 数据库运行。"""
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from autodidact.repository import Repository
 from autodidact.schemas import ClaimDraft
 
 
+# 功能：无测试库配置时跳过；有配置时要求 *_test 名称并创建/清理隔离 schema，不使用日常学习库。
 @pytest.fixture
 async def postgres_engine():
     url = os.environ.get("AUTODIDACT_TEST_DATABASE_URL")
@@ -49,10 +51,12 @@ async def postgres_engine():
         await admin.dispose()
 
 
+# 功能：在隔离库验证无版本的初始结构升级后保留智能体身份。
 @pytest.mark.asyncio
 async def test_unversioned_0001_upgrade_preserves_agent(postgres_engine):
     config = alembic_config()
 
+    # 功能：在测试连接创建 0001 基线，准备历史升级场景。
     def build_baseline(connection):
         config.attributes["connection"] = connection
         command.upgrade(config, BASELINE_REVISION)
@@ -78,6 +82,7 @@ async def test_unversioned_0001_upgrade_preserves_agent(postgres_engine):
     assert revision == HEAD_REVISION
 
 
+# 功能：在隔离库并发写同主张并验证向量召回，检查真实数据库约束。
 @pytest.mark.asyncio
 async def test_concurrent_claim_uniqueness_and_pgvector_recall(postgres_engine):
     await upgrade_database(postgres_engine)
@@ -95,6 +100,7 @@ async def test_concurrent_claim_uniqueness_and_pgvector_recall(postgres_engine):
         await session.commit()
         learning_id = learning.id
 
+    # 功能：使用独立测试会话写相同主张，以制造并发唯一键竞争。
     async def write_claim():
         async with maker() as session:
             return await Repository(session).add_claim(
