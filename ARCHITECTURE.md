@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-03；业务功能基线 d7f6583，文档/注释起点 a92bbad，schema HEAD 20261002_0005。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-03；业务功能基线 d7f6583，文档/注释起点 a92bbad，f47ff0a 后补争议缓存刷新修复，schema HEAD 20261002_0005。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -147,7 +147,7 @@ CLI / 本地 Workbench
 | [tests/test_claim_evidence_persistence.py](tests/test_claim_evidence_persistence.py) | 检查主张证据的语义状态持久化与已知唯一约束竞争识别。 | `test_legacy_anchor_without_semantic_support_cannot_remain_claim_evidence`、`test_mixed_supported_and_contradictory_quotes_disqualify_same_source`、`test_only_known_unique_constraint_is_safe_to_recover`、`test_asyncpg_wrapped_unique_constraint_is_recovered` |
 | [tests/test_claim_support.py](tests/test_claim_support.py) | 检查引文是否能逐字定位到已读来源，拒绝伪造或未读 URL。 | `test_verbatim_citation_is_anchored_to_read_source`、`test_unread_or_nonverbatim_citation_cannot_supply_claim_source_id` |
 | [tests/test_dispute_resolution.py](tests/test_dispute_resolution.py) | 检查四结果决议策略与 Resolver 的数据库证据门控。 | `test_resolution_policy_accepts_all_four_explicit_outcomes_when_qualified`、`test_resolution_policy_rejects_unanchored_or_incomplete_proposal`、`test_resolver_applies_only_a_policy_approved_decision`、`test_resolver_rejects_source_ids_without_database_backed_evidence` |
-| [tests/test_dispute_transactions.py](tests/test_dispute_transactions.py) | 检查决议事务、历史与重放；现有模拟会话缺完整 AsyncSession 接口，两项基线失败待修复。 | `test_unresolved_resolution_writes_one_history_and_retries_idempotently`、`test_adopt_new_resolution_commits_new_belief_evidence_and_histories_together`、`test_conditional_resolution_rejects_statement_not_supported_by_the_claim`、`test_repository_rejects_unlinked_sources_for_new_claim`、其余见代码内注释 |
+| [tests/test_dispute_transactions.py](tests/test_dispute_transactions.py) | 检查决议事务、原文引文、行锁缓存刷新和重放幂等。 | `test_unresolved_resolution_writes_one_history_and_retries_idempotently`、`test_adopt_new_resolution_commits_new_belief_evidence_and_histories_together`、`test_conditional_resolution_rejects_statement_not_supported_by_the_claim`、`test_repository_rejects_unlinked_sources_for_new_claim`、其余见代码内注释 |
 | [tests/test_embeddings.py](tests/test_embeddings.py) | 使用 HTTP 替身检查嵌入响应形状和关闭模式降级。 | `test_openai_compatible_embedding_provider_validates_vector_shape`、`test_disabled_embedding_provider_is_a_graceful_fallback` |
 | [tests/test_epistemic_idempotency.py](tests/test_epistemic_idempotency.py) | 用内存会话替身检查目标、主张和争议的重复写入保护。 | `test_active_goal_title_is_deduplicated_after_text_normalization`、`test_claim_is_idempotent_within_learning_session`、`test_open_dispute_is_idempotent_and_does_not_rewrite_belief_history`、`test_legacy_open_dispute_without_dedup_key_is_reused` |
 | [tests/test_goal_retry.py](tests/test_goal_retry.py) | 检查目标失败计数达到上限后进入 blocked，防止无限重试。 | `test_failed_goal_becomes_blocked_at_retry_limit` |
@@ -275,3 +275,9 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 按 AGENTS 在修改前后分别运行已有 pytest，两次结果一致：56 passed、2 failed、2 skipped。两项失败均来自 test_dispute_transactions 中模拟 _Session 缺少 scalars，发生在新增注释之前；未配置在线测试数据库，两项 PostgreSQL 集成测试跳过。本次不顺带修复测试替身，也不把跳过当通过。CLI 帮助检查正常；完整验证范围见 [最新开发记录](doc/05开发过程与增量记录.md)。
 
 以后新增/修改方法时同步维护职责注释及本节逐文件索引；若注释与代码冲突，以实际实现核对后修正文档，不用注释替代测试或证据。
+
+## 10. 后续修复：争议锁定查询刷新
+
+2026-10-03 在 f47ff0a 后修复 apply_dispute_resolution：SELECT FOR UPDATE 配合 populate_existing=True，避免会话已加载争议时仍用旧决议属性。相同决议重试复用已生成信念，不同决议重试拒绝改写；不改变证据门槛。事务测试补齐 scalars/all 和按 Claim/Source/status 过滤原文，并断言新 Evidence 保留真实引用。
+
+新增原文筛选及两类缓存重试回归；当前完整 pytest 为 61 passed / 2 skipped，compileall、Ruff 通过。跳过项仍是未配置隔离库的 PostgreSQL 集成测试，真实数据库并发验收另属 V03。本次没有 schema 迁移、回填或学习数据写入；第 9 节保留上一轮注释工作的历史结果。

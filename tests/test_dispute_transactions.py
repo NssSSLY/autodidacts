@@ -1,4 +1,5 @@
-# 文件职责：检查决议事务、历史与重放；现有模拟会话缺完整 AsyncSession 接口，两项基线失败待修复。
+# 文件职责：检查决议事务、原文引文、行锁缓存刷新和重放幂等。
+from copy import deepcopy
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -23,6 +24,10 @@ class _Result:
     def scalars(self):
         return self.values
 
+    # 功能：模拟 ScalarResult.all，返回匹配查询条件的原文片段。
+    def all(self):
+        return self.values
+
 
 class _Session:
     # 功能：初始化争议/信念、待写实体及提交/回滚计数；不是完整 AsyncSession 实现。
@@ -32,15 +37,37 @@ class _Session:
         self.added = []
         self.commits = 0
         self.rollbacks = 0
+        self.claim_evidence = []
+        self.locked_dispute = dispute
+        self.beliefs = {belief.id: belief}
 
-    # 功能：返回预置争议，模拟事务中的查询执行。
-    async def execute(self, _statement):
-        return _Result([self.dispute])
+    # 功能：模拟行锁查询；只有显式刷新身份缓存时返回数据库中的最新决议。
+    async def execute(self, statement):
+        dispute = (
+            self.locked_dispute
+            if statement.get_execution_options().get("populate_existing")
+            else self.dispute
+        )
+        return _Result([dispute])
 
-    # 功能：按模型类型返回旧信念，其它类型返回空以控制测试路径。
+    # 功能：按真实 SQL 参数筛选主张、来源和 supported 状态，模拟原文查询接口。
+    async def scalars(self, statement):
+        params = statement.compile().params
+        assert "claim_evidence.excerpt" in str(statement)
+        return _Result(
+            [
+                record.excerpt
+                for record in self.claim_evidence
+                if record.claim_id == params["claim_id_1"]
+                and record.source_id == params["source_id_1"]
+                and record.status == params["status_1"]
+            ]
+        )
+
+    # 功能：按主键返回预置或新写入信念，其它类型返回空以控制测试路径。
     async def get(self, model, _item_id):
         if model is models.Belief:
-            return self.belief
+            return self.beliefs.get(_item_id)
         return None
 
     # 功能：把新实体加入模拟待写列表，便于检查证据和历史。
@@ -52,6 +79,8 @@ class _Session:
         for item in self.added:
             if isinstance(item, models.Belief) and item.id is None:
                 item.id = uuid4()
+            if isinstance(item, models.Belief):
+                self.beliefs[item.id] = item
 
     # 功能：累计事务提交次数，不真正写库。
     async def commit(self):
@@ -122,13 +151,19 @@ async def test_unresolved_resolution_writes_one_history_and_retries_idempotently
     assert dispute.resolution_metadata["outcome"] == "unresolved"
 
 
-# 功能：检查采用新结论时信念、证据和历史一并提交；当前受模拟会话缺 scalars 限制。
+# 功能：检查采用新结论时信念、证据和历史一并提交。
 @pytest.mark.asyncio
 async def test_adopt_new_resolution_commits_new_belief_evidence_and_histories_together():
     dispute, belief, claim = _entities()
     session = _Session(dispute, belief)
     repo = Repository(session)  # type: ignore[arg-type]
     first, second = uuid4(), uuid4()
+    session.claim_evidence = [
+        models.ClaimEvidence(
+            claim_id=claim.id, source_id=source_id, status="supported", excerpt=excerpt
+        )
+        for source_id, excerpt in ((first, "原文支持片段一"), (second, "原文支持片段二"))
+    ]
 
     # 功能：提供两个库内合格来源替身，隔离来源查询路径。
     async def qualified(*_args):
@@ -155,7 +190,12 @@ async def test_adopt_new_resolution_commits_new_belief_evidence_and_histories_to
     assert result.test_score == 0.0
     assert belief.status == BeliefStatus.RETRACTED
     assert dispute.status == DisputeStatus.RESOLVED_NEW
-    assert sum(isinstance(item, models.Evidence) for item in session.added) == 2
+    evidence = [item for item in session.added if isinstance(item, models.Evidence)]
+    assert len(evidence) == 2
+    assert {item.source_id: item.excerpt for item in evidence} == {
+        first: "原文支持片段一",
+        second: "原文支持片段二",
+    }
     assert sum(isinstance(item, models.BeliefHistory) for item in session.added) == 2
 
 
@@ -211,7 +251,7 @@ async def test_repository_rejects_unlinked_sources_for_new_claim():
     )
 
 
-# 功能：检查未解决争议补证后可采用新主张；当前受模拟会话缺 scalars 限制。
+# 功能：检查未解决争议补证后可采用新主张并保留支持原文。
 @pytest.mark.asyncio
 async def test_unresolved_dispute_can_later_adopt_new_supported_claim():
     dispute, belief, claim = _entities()
@@ -229,6 +269,12 @@ async def test_unresolved_dispute_can_later_adopt_new_supported_claim():
     )
 
     first, second = uuid4(), uuid4()
+    session.claim_evidence = [
+        models.ClaimEvidence(
+            claim_id=claim.id, source_id=source_id, status="supported", excerpt=excerpt
+        )
+        for source_id, excerpt in ((first, "原文支持片段一"), (second, "原文支持片段二"))
+    ]
 
     # 功能：补入两个独立来源替身，模拟后续调查取得新证据。
     async def qualified(*_args):
@@ -251,3 +297,63 @@ async def test_unresolved_dispute_can_later_adopt_new_supported_claim():
     assert result.status == BeliefStatus.SUPPORTED
     assert dispute.status == DisputeStatus.RESOLVED_NEW
     assert dispute.resolution_metadata["outcome"] == "adopt_new"
+
+
+# 功能：验证只拼接同一主张与来源的 supported 原文，不混入其它状态或关系的引用。
+@pytest.mark.asyncio
+async def test_supported_excerpt_excludes_unrelated_or_unsupported_quotes():
+    dispute, belief, claim = _entities()
+    session = _Session(dispute, belief)
+    source_id = uuid4()
+    session.claim_evidence = [
+        models.ClaimEvidence(
+            claim_id=claim_id, source_id=record_source, status=status, excerpt=excerpt
+        )
+        for claim_id, record_source, status, excerpt in [
+            (claim.id, source_id, "supported", "引文一"),
+            (claim.id, source_id, "supported", "引文二"),
+            (claim.id, source_id, "contradicts", "矛盾引文"),
+            (claim.id, source_id, "anchored", "仅定位未核验"),
+            (uuid4(), source_id, "supported", "其它主张"),
+            (claim.id, uuid4(), "supported", "其它来源"),
+        ]
+    ]
+    repo = Repository(session)  # type: ignore[arg-type]
+    assert await repo.supported_excerpt(claim.id, source_id) == "引文一\n引文二"
+    assert await repo.supported_excerpt(claim.id, uuid4()) == ""
+
+
+# 功能：验证锁定后读取最新决议，缓存仍未解决时也不能重复写入或改变既有决议。
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["adopt_new", "keep_old"])
+async def test_resolution_replay_refreshes_stale_dispute_after_lock(outcome):
+    dispute, belief, claim = _entities()
+    session = _Session(dispute, belief)
+    replacement = models.Belief(
+        id=uuid4(), statement=claim.statement, status=BeliefStatus.SUPPORTED
+    )
+    session.beliefs[replacement.id] = replacement
+    latest = deepcopy(dispute)
+    latest.status = DisputeStatus.RESOLVED_NEW
+    latest.resolution_metadata = {
+        "outcome": "adopt_new",
+        "resolved_belief_id": str(replacement.id),
+    }
+    session.locked_dispute = latest
+    repo = Repository(session)  # type: ignore[arg-type]
+    kwargs = {
+        "outcome": outcome,
+        "rationale": "重试请求",
+        "conditional_statement": "",
+        "conditions": [],
+        "evidence_source_ids": [],
+    }
+    if outcome == "adopt_new":
+        assert await repo.apply_dispute_resolution(dispute, belief, claim, **kwargs) is replacement
+        assert session.commits == 1
+    else:
+        with pytest.raises(ValueError, match="already been resolved differently"):
+            await repo.apply_dispute_resolution(dispute, belief, claim, **kwargs)
+        assert session.rollbacks == 1
+    assert session.added == []
+    assert belief.status == BeliefStatus.VERIFIED

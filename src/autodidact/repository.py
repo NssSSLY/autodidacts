@@ -665,7 +665,7 @@ class Repository(LearningState):
             found[source_id] = source
         return await self.lineage.evidence_sources(list(found.values()))
 
-    # 功能：锁定争议并在同一事务内应用四种结果、证据和历史；证据不足或条件结论无支撑时拒绝改写。
+    # 功能：锁定并刷新争议缓存，在同一事务内应用四结果、证据和历史；重试使用最新决议，证据不足拒绝改写。
     async def apply_dispute_resolution(
         self,
         dispute: models.Dispute,
@@ -684,7 +684,11 @@ class Repository(LearningState):
 
         try:
             locked = await self.s.execute(
-                select(models.Dispute).where(models.Dispute.id == dispute.id).with_for_update()
+                select(models.Dispute)
+                .where(models.Dispute.id == dispute.id)
+                .with_for_update()
+                # 行锁不会自动覆盖身份映射中的旧属性，必须读取锁定后的最新决议。
+                .execution_options(populate_existing=True)
             )
             dispute = locked.scalar_one()
             if dispute.belief_id != belief.id or dispute.incoming_claim_id != claim.id:
