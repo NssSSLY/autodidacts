@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from autodidact import models
 from autodidact.enums import BeliefStatus, GoalStatus
-from autodidact.migrations import BASELINE_REVISION, alembic_config, upgrade_database
+from autodidact.migrations import BASELINE_REVISION, HEAD_REVISION, alembic_config, upgrade_database
 from autodidact.repository import Repository
 from autodidact.schemas import ClaimDraft
 
@@ -75,7 +75,7 @@ async def test_unversioned_0001_upgrade_preserves_agent(postgres_engine):
         )
         revision = await connection.scalar(text("SELECT version_num FROM alembic_version"))
     assert actual == original_id
-    assert revision == "20260920_0003"
+    assert revision == HEAD_REVISION
 
 
 @pytest.mark.asyncio

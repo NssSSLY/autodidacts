@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -217,6 +218,7 @@ class Skill(Base):
     failure_count: Mapped[int] = mapped_column(Integer, default=0)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    metadata_json: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -266,3 +268,29 @@ class ModelProfile(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class OperationEvent(Base):
+    __tablename__ = "operation_events"
+    __table_args__ = (
+        Index("ix_operations_resource_created", "resource", "created_at"),
+        Index("ix_operations_batch", "batch_id"),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    batch_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    resource: Mapped[str] = mapped_column(String(40), nullable=False)
+    reserved: Mapped[float] = mapped_column(Float, nullable=False)
+    actual: Mapped[float | None] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ResearchReport(Base):
+    __tablename__ = "research_reports"
+    __table_args__ = (UniqueConstraint("kind", "report_key", name="uq_reports_kind_key"),)
+    id: Mapped[UUID] = uuid_pk()
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    report_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

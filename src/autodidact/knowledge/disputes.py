@@ -109,8 +109,13 @@ class DisputeResolver:
         claim: object,
         proposal: DisputeResolutionProposal,
     ) -> ResolutionDecision:
+        extra = (
+            {"conditional_claim_id": proposal.conditional_claim_id}
+            if proposal.outcome == "conditional" and proposal.conditional_claim_id
+            else {}
+        )
         sources = await self.repository.qualified_resolution_sources(
-            dispute, belief, claim, proposal.outcome, proposal.evidence_source_ids
+            dispute, belief, claim, proposal.outcome, proposal.evidence_source_ids, **extra
         )
         decision = self.policy.decide(
             dispute, proposal, sources, {source.source_id for source in sources}
@@ -126,6 +131,7 @@ class DisputeResolver:
             conditional_statement=proposal.conditional_statement,
             conditions=proposal.conditions,
             evidence_source_ids=list(decision.qualified_source_ids),
+            **extra,
         )
         return decision
 

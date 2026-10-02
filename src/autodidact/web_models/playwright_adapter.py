@@ -51,50 +51,55 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
                 user_data_dir=str(Path(self.config.persistent_profile_dir)),
                 headless=self.config.headless,
             )
-            page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-            await page.goto(self.config.url, wait_until="domcontentloaded")
-            if self.config.new_chat_selector:
-                locator = page.locator(self.config.new_chat_selector)
-                if await locator.count():
-                    await locator.first.click()
-            input_box = page.locator(self.config.input_selector).first
-            await input_box.wait_for(state="visible", timeout=30_000)
-            await input_box.fill(prompt)
-            await page.locator(self.config.send_selector).first.click()
-
-            timeout_ms = self.config.response_timeout_seconds * 1000
-            if self.config.done_selector:
-                await page.locator(self.config.done_selector).wait_for(state="visible", timeout=timeout_ms)
-            else:
-                # Poll until the last assistant message stops changing for 2.5 seconds.
-                deadline = asyncio.get_event_loop().time() + self.config.response_timeout_seconds
-                last = ""
-                stable = 0
-                while asyncio.get_event_loop().time() < deadline:
+            try:
+                page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                await page.goto(self.config.url, wait_until="domcontentloaded")
+                if self.config.new_chat_selector:
+                    locator = page.locator(self.config.new_chat_selector)
+                    if await locator.count():
+                        await locator.first.click()
+                old_count = await page.locator(self.config.assistant_message_selector).count()
+                box = page.locator(self.config.input_selector).first
+                await box.wait_for(state="visible", timeout=30000)
+                await box.fill(prompt)
+                await page.locator(self.config.send_selector).first.click()
+                deadline = asyncio.get_running_loop().time() + self.config.response_timeout_seconds
+                last, stable, completed = "", 0, False
+                while asyncio.get_running_loop().time() < deadline:
                     nodes = page.locator(self.config.assistant_message_selector)
                     count = await nodes.count()
-                    current = await nodes.nth(count - 1).inner_text() if count else ""
-                    if current and current == last:
-                        stable += 1
-                    else:
-                        stable = 0
+                    current = await nodes.last.inner_text() if count > old_count else ""
+                    if (
+                        self.config.done_selector
+                        and current
+                        and await page.locator(self.config.done_selector).is_visible()
+                    ):
+                        completed = True
+                        break
+                    stable = stable + 1 if current and current == last else 0
                     last = current
-                    if stable >= 5:
+                    if not self.config.done_selector and stable >= 5:
+                        completed = True
                         break
                     await asyncio.sleep(0.5)
-            nodes = page.locator(self.config.assistant_message_selector)
-            count = await nodes.count()
-            if not count:
+                if not completed:
+                    raise TimeoutError("网页模型回答未在限时内完成")
+                node = page.locator(self.config.assistant_message_selector).last
+                text = (await node.inner_text())[:24000]
+                links = await node.locator("a[href]").evaluate_all(
+                    "(nodes) => nodes.map(n => n.href)"
+                )
+                citations = list(
+                    dict.fromkeys(u for u in links if u.startswith(("https://", "http://")))
+                )
+                return ModelAnswer(
+                    provider=self.config.provider,
+                    access_type="web",
+                    prompt=prompt,
+                    response=text,
+                    citations=citations,
+                    conversation_ref=page.url,
+                    metadata={"url": self.config.url, "evidence_level": 0},
+                )
+            finally:
                 await ctx.close()
-                raise RuntimeError("No assistant response found")
-            text = await nodes.nth(count - 1).inner_text()
-            await ctx.close()
-            return ModelAnswer(
-                provider=self.config.provider,
-                access_type="web",
-                displayed_model=None,
-                prompt=prompt,
-                response=text,
-                citations=[],
-                metadata={"url": self.config.url},
-            )

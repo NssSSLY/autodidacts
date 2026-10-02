@@ -4,6 +4,8 @@
 
 ## 阅读入口
 
+- [2026-10-02 功能与使用说明](doc/20261002功能实施与使用说明.md)：闭卷核源、争议调查、长期记忆、模型迁移、本地网页及 EXE 构建配方。本轮按要求未运行测试，新增流程待实机验收。
+
 - [路线评估与初始构想对照](doc/路线评估与初始构想对照.md)：完成后能做到什么、与初衷的差距和建议实施顺序。
 - [部署安装与验证手册](doc/部署安装与验证手册.md)：环境准备、Windows 命令、数据库与真实学习验收、备份换机、服务器及打包边界。
 - [项目全量迁移交接与技术说明](doc/项目全量迁移交接与技术说明.md)：项目历史、当前代码结构与详细技术说明。
@@ -114,7 +116,7 @@ autodidact status
 运行冻结的示例基准：
 
 ```powershell
-autodidact benchmark data/benchmark/sample.json
+autodidact benchmark --path data/benchmark/sample.json
 ```
 
 ## 单次学习循环

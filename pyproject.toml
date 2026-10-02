@@ -24,6 +24,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+documents = ["pypdf>=5,<7"]
+packaging = ["pyinstaller>=6,<7"]
 dev = [
   "pytest>=8.3,<9",
   "pytest-asyncio>=0.24,<1",
@@ -35,6 +37,12 @@ autodidact = "autodidact.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/autodidact"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"alembic.ini" = "autodidact/_resources/alembic.ini"
+"migrations" = "autodidact/_resources/migrations"
+"config/agent.yaml" = "autodidact/_resources/config/agent.yaml"
+".env.example" = "autodidact/_resources/.env.example"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

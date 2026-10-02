@@ -1,0 +1,250 @@
+"""Operational persistence, separated from epistemic promotion rules."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from uuid import uuid4
+
+from sqlalchemy import exists, func, select, text
+
+from autodidact import models
+from autodidact.config import agent_config
+from autodidact.enums import GoalStatus
+
+
+class LearningState:
+    async def recover_interrupted(self):
+        """Called only with database-wide controller ownership.
+
+        Preserve partial evidence and close interrupted attempts; retry the goal
+        rather than silently pretending that an interrupted attempt completed.
+        """
+        states = ["planned", "researching", "synthesizing", "testing", "reflecting"]
+        goals = (
+            await self.s.scalars(select(models.Goal).where(models.Goal.status.in_(states)))
+        ).all()
+        for goal in goals:
+            sessions = (
+                await self.s.scalars(
+                    select(models.LearningSession).where(
+                        models.LearningSession.goal_id == goal.id,
+                        models.LearningSession.completed_at.is_(None),
+                    )
+                )
+            ).all()
+            for attempt in sessions:
+                attempt.result = {
+                    **(attempt.result or {}),
+                    "interrupted_stage": goal.status,
+                    "recovery": "retry_preserving_evidence",
+                }
+                attempt.success = False
+                attempt.completed_at = datetime.now(UTC)
+            goal.metadata_json = {
+                **(goal.metadata_json or {}),
+                "last_interrupted_stage": goal.status,
+            }
+            goal.retry_count += 1
+            goal.status = (
+                GoalStatus.BLOCKED
+                if goal.retry_count >= agent_config().learning.max_retry
+                else GoalStatus.FAILED
+            )
+            if goal.status == GoalStatus.BLOCKED:
+                goal.completed_at = datetime.now(UTC)
+        await self.s.commit()
+        return len(goals)
+
+    async def checkpoint(self, attempt, stage: str, **payload):
+        previous = attempt.result or {}
+        stages = list(previous.get("checkpoints", []))
+        stages.append({"stage": stage, "at": datetime.now(UTC).isoformat()})
+        attempt.result = {**previous, **payload, "checkpoint": stage, "checkpoints": stages}
+        await self.s.commit()
+
+    async def accepted_memory(self, limit=200):
+        has_dispute = exists(
+            select(models.Dispute.id).where(
+                models.Dispute.belief_id == models.Belief.id,
+                models.Dispute.status.in_(["open", "investigating", "unresolved"]),
+            )
+        )
+        rows = (
+            await self.s.scalars(
+                select(models.Belief)
+                .where(
+                    models.Belief.status.in_(["supported", "verified"]),
+                    ~has_dispute,
+                )
+                .order_by(models.Belief.confidence.desc(), models.Belief.updated_at.desc())
+                .limit(limit)
+            )
+        ).all()
+        return [
+            {
+                "id": str(b.id),
+                "topic": b.topic,
+                "statement": b.statement,
+                "status": b.status,
+                "confidence": b.confidence,
+            }
+            for b in rows
+        ]
+
+    async def get_report(self, kind, key):
+        return await self.s.scalar(
+            select(models.ResearchReport).where(
+                models.ResearchReport.kind == kind,
+                models.ResearchReport.report_key == key,
+            )
+        )
+
+    async def save_report(self, kind, payload, key=None):
+        key = key or str(uuid4())
+        # Makes daily snapshots safe across repeated commands and interrupted processes.
+        await self.s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 718204613})
+        existing = await self.get_report(kind, key)
+        if existing:
+            await self.s.commit()
+            return existing
+        report = models.ResearchReport(kind=kind, report_key=key, payload=payload)
+        self.s.add(report)
+        await self.s.commit()
+        await self.s.refresh(report)
+        return report
+
+    async def refresh_model_profiles(self):
+        observations = (await self.s.scalars(select(models.ModelObservation))).all()
+        evaluations = (await self.s.scalars(select(models.Evaluation))).all()
+        groups = {}
+        for obs in observations:
+            key = (obs.provider, obs.displayed_model or "unknown")
+            g = groups.setdefault(key, {"calls": 0, "errors": {}, "domains": {}})
+            g["calls"] += 1
+            error = (obs.metadata_json or {}).get("error")
+            if error:
+                g["errors"][error] = g["errors"].get(error, 0) + 1
+        for evaluation in evaluations:
+            audit = (evaluation.components or {}).get("audit", {})
+            if audit.get("protocol") != "closed_book_v1":
+                continue
+            key = (
+                audit.get("learner_provider", "openai_compatible"),
+                audit.get("learner_model", "unknown"),
+            )
+            g = groups.setdefault(key, {"calls": 0, "errors": {}, "domains": {}})
+            goal = await self.s.get(models.Goal, evaluation.goal_id)
+            domain = (goal.title if goal else "unknown")[:200]
+            g["domains"].setdefault(domain, []).append(evaluation.score)
+        reports = (
+            await self.s.scalars(
+                select(models.ResearchReport)
+                .where(
+                    models.ResearchReport.kind.in_(
+                        ["benchmark_run", "model_migration", "scheduled_benchmark"]
+                    )
+                )
+                .order_by(models.ResearchReport.created_at)
+            )
+        ).all()
+        for report in reports:
+            payload = report.payload
+            if report.kind == "model_migration":
+                runs = [payload["groups"][label] for label in ["A1", "B1"]]
+            elif report.kind == "scheduled_benchmark":
+                runs = [payload["base"]]
+            else:
+                runs = [] if payload.get("memory_snapshot") else [payload]
+            for run in runs:
+                key = (run.get("provider", "unknown"), run.get("model", "unknown"))
+                g = groups.setdefault(key, {"calls": 0, "errors": {}, "domains": {}})
+                g["benchmark_score"] = run["score"]
+                for detail in run.get("details", []):
+                    domain = f"frozen_base:{detail.get('category', 'general')}"
+                    g["domains"].setdefault(domain, []).append(detail["score"])
+        for (provider, name), group in groups.items():
+            profile = await self.s.scalar(
+                select(models.ModelProfile)
+                .where(
+                    models.ModelProfile.provider == provider,
+                    models.ModelProfile.model_name == name,
+                )
+                .limit(1)
+            )
+            if profile is None:
+                profile = models.ModelProfile(provider=provider, model_name=name)
+                self.s.add(profile)
+            profile.sample_count = sum(len(v) for v in group["domains"].values())
+            if "benchmark_score" in group:
+                profile.benchmark_score = group["benchmark_score"]
+            profile.domain_scores = {
+                k: {"mean": sum(v) / len(v), "samples": len(v)} for k, v in group["domains"].items()
+            }
+            profile.error_profile = {
+                "calls": group["calls"],
+                "failures": group["errors"],
+                "score_source": "闭卷核源与冻结基准（含模型裁判），未替代人工真值",
+            }
+        await self.s.commit()
+        return len(groups)
+
+    async def goal_quota_remaining(self):
+        now = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        generated = await self.s.scalar(
+            select(func.count())
+            .select_from(models.Goal)
+            .where(
+                models.Goal.source != "human",
+                models.Goal.created_at >= now,
+            )
+        )
+        return max(0, agent_config().learning.daily_goal_limit - generated)
+
+    async def open_disputes(self, limit=20):
+        return list(
+            (
+                await self.s.scalars(
+                    select(models.Dispute)
+                    .where(models.Dispute.status.in_(["open", "investigating", "unresolved"]))
+                    .order_by(models.Dispute.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        )
+
+    async def selected_skills(self, title, limit=2):
+        rows = (await self.s.scalars(select(models.Skill))).all()
+        terms = set(title.casefold().split())
+        eligible = [
+            s
+            for s in rows
+            if (s.metadata_json or {}).get("status") == "validated"
+            and (
+                terms.intersection((s.trigger_condition or "").casefold().split())
+                or (s.trigger_condition and s.trigger_condition in title)
+            )
+        ]
+        return sorted(eligible, key=lambda s: s.confidence, reverse=True)[:limit]
+
+    async def supported_excerpt(self, claim_id, source_id):
+        passages = (
+            await self.s.scalars(
+                select(models.ClaimEvidence.excerpt).where(
+                    models.ClaimEvidence.claim_id == claim_id,
+                    models.ClaimEvidence.source_id == source_id,
+                    models.ClaimEvidence.status == "supported",
+                )
+            )
+        ).all()
+        return "\n".join(passages)
+
+    async def record_skill_outcome(self, skill_ids, passed):
+        for skill_id in skill_ids:
+            skill = await self.s.get(models.Skill, skill_id)
+            if skill:
+                skill.success_count += int(passed)
+                skill.failure_count += int(not passed)
+                skill.confidence = (skill.success_count + 1) / (
+                    skill.success_count + skill.failure_count + 2
+                )
+        await self.s.commit()

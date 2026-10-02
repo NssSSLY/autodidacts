@@ -67,7 +67,13 @@ Playwright 网页模型适配器（PlaywrightWebModelAdapter）
 
 数据库结构由 Alembic 迁移管理。`init-db` 会升级到最新迁移版本；旧版 `create_all` 数据库只有在核心表与字段完全匹配初始基线时才会被无损标记，结构不一致时停止自动迁移，以保护已有学习状态。
 
-## 模型迁移协议（目标设计）
+## 2026-10-02 实现增量
+
+`ObservedLLM` 记录等级 0 模型观察，`OperationBudget` 持久预留调用资源，PostgreSQL advisory lock 约束单控制器写入。评估请求分成出题、闭卷回答及独立检索核源；争议目标接入 `DisputeInvestigator` 与现有决议门槛。`MemoryConsolidator` 提取候选技能并保留每日快照，冻结实验验证后才在规划中使用。
+
+新增 `operation_events` 与 `research_reports` 数据表；`skills.metadata_json` 记录候选/验证状态。工作台通过本机 HTTP 入口管理目标与查询认知状态，不绕过晋升门槛。实现与待验收边界见 `doc/20261002功能实施与使用说明.md`。
+
+## 模型迁移协议
 
 将模型 A 替换为模型 B 之前：
 

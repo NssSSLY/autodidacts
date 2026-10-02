@@ -178,8 +178,8 @@ class RuleBasedSourceQualityClassifier:
 
 
 def _is_government_host(host: str) -> bool:
-    return (
-        host.endswith((".gov", ".mil")) or any(host == suffix or host.endswith(f".{suffix}") for suffix in _GOVERNMENT_SUFFIXES)
+    return host.endswith((".gov", ".mil")) or any(
+        host == suffix or host.endswith(f".{suffix}") for suffix in _GOVERNMENT_SUFFIXES
     )
 
 
@@ -192,6 +192,7 @@ def _is_academic_host(host: str) -> bool:
 @dataclass(frozen=True, slots=True)
 class EvidenceSource:
     source_id: str
+    lineage_key: str = ""
     normalized_url: str = ""
     publisher_key: str = ""
     content_hash: str = ""
@@ -230,7 +231,10 @@ def independent_source_representatives(sources: list[EvidenceSource]) -> list[Ev
             same_content = bool(
                 left.content_hash and right.content_hash and left.content_hash == right.content_hash
             )
-            if same_publisher or same_content:
+            same_lineage = bool(
+                left.lineage_key and right.lineage_key and left.lineage_key == right.lineage_key
+            )
+            if same_publisher or same_content or same_lineage:
                 union(left_index, right_index)
 
     groups: dict[int, list[EvidenceSource]] = {}

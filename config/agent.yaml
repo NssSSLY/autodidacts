@@ -19,6 +19,20 @@ learning:
   max_follow_up_goals_per_cycle: 4
   max_cycles_per_process: 20
   cycle_sleep_seconds: 30
+  evaluation_questions: 3
+  require_independent_verification: true
+  max_daily_model_calls: 200
+  max_daily_tokens: 1000000
+  max_daily_searches: 100
+  max_daily_web_reads: 200
+  max_daily_web_model_calls: 20
+  max_daily_embedding_calls: 200
+  max_daily_estimated_cost_usd: 0
+  max_response_bytes: 2000000
+  max_redirects: 5
+  max_dispute_investigations: 3
+  memory_review_days: 30
+  auto_consolidate_memory: true
 
 source_policy:
   model_output_evidence_level: 0

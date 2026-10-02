@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -60,8 +61,13 @@ class OpenAICompatibleEmbeddingProvider(EmbeddingProvider):
             raise EmbeddingUnavailable(
                 f"embedding dimension must be {self.dimension}, got {len(vector) if isinstance(vector, list) else 'invalid'}"
             )
-        if not all(isinstance(value, int | float) for value in vector):
+        if not all(
+            isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+            for value in vector
+        ):
             raise EmbeddingUnavailable("embedding vector contains non-numeric values")
+        if not any(value != 0 for value in vector):
+            raise EmbeddingUnavailable("zero vector cannot support cosine retrieval")
         return [float(value) for value in vector]
 
 

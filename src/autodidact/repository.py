@@ -11,12 +11,14 @@ from autodidact import models
 from autodidact.config import agent_config
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
 from autodidact.knowledge.claim_support import ClaimEvidenceVerification
+from autodidact.knowledge.resolution_claim import conditional_claim
 from autodidact.knowledge.sources import (
     EvidenceSource,
     independent_source_representatives,
     normalize_url,
     publisher_key,
 )
+from autodidact.learning_state import LearningState
 from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
 from autodidact.schemas import CandidateGoal, ClaimDraft, SourceDocument
 
@@ -52,7 +54,7 @@ def _expected_unique_violation(exc: IntegrityError, constraint: str) -> bool:
     )
 
 
-class Repository:
+class Repository(LearningState):
     def __init__(self, session: AsyncSession):
         self.s = session
 
@@ -152,7 +154,7 @@ class Repository:
     async def finish_learning_session(
         self, item: models.LearningSession, result: dict, reflection: dict, success: bool
     ) -> None:
-        item.result = result
+        item.result = {**(item.result or {}), **result}
         item.reflection = reflection
         item.success = success
         item.completed_at = datetime.now(UTC)
@@ -174,6 +176,13 @@ class Repository:
                 if not getattr(found, field, None) and value:
                     setattr(found, field, value)
                     changed = True
+            if doc.lineage_key and not (found.metadata_json or {}).get("lineage_key"):
+                found.metadata_json = {
+                    **(found.metadata_json or {}),
+                    **doc.metadata,
+                    "lineage_key": doc.lineage_key,
+                }
+                changed = True
             if changed:
                 await self.s.commit()
             return found
@@ -189,6 +198,7 @@ class Repository:
             credibility_score=doc.credibility_score,
             content_hash=content_hash,
             extracted_text=doc.text,
+            metadata_json={**doc.metadata, "lineage_key": doc.lineage_key},
         )
         self.s.add(item)
         await self.s.commit()
@@ -294,20 +304,32 @@ class Repository:
         return list(q.scalars())
 
     async def semantic_beliefs(
-        self, embedding: list[float], limit: int = 30
+        self, embedding: list[float], limit: int = 30, *, fingerprint: str | None = None
     ) -> list[models.Belief]:
         distance = models.Belief.embedding.cosine_distance(embedding)
         q = await self.s.execute(
             select(models.Belief)
             .where(models.Belief.status != BeliefStatus.RETRACTED)
             .where(models.Belief.embedding.is_not(None))
+            .where(
+                models.Belief.metadata_json["embedding_fingerprint"].astext == fingerprint
+                if fingerprint
+                else True
+            )
             .order_by(distance)
             .limit(limit)
         )
         return list(q.scalars())
 
-    async def set_belief_embedding(self, belief: models.Belief, embedding: list[float]) -> None:
+    async def set_belief_embedding(
+        self, belief: models.Belief, embedding: list[float], *, fingerprint: str | None = None
+    ) -> None:
         belief.embedding = embedding
+        if fingerprint:
+            belief.metadata_json = {
+                **(belief.metadata_json or {}),
+                "embedding_fingerprint": fingerprint,
+            }
         await self.s.commit()
 
     async def beliefs_for_topic(self, topic: str, limit: int = 10) -> list[models.Belief]:
@@ -509,6 +531,7 @@ class Repository:
         claim: models.Claim,
         outcome: str,
         requested_source_ids: list[str],
+        conditional_claim_id: UUID | None = None,
     ) -> list[EvidenceSource]:
         """Fetch source links for the proposition the proposed outcome changes."""
         if dispute.belief_id != belief.id or dispute.incoming_claim_id != claim.id:
@@ -538,7 +561,12 @@ class Repository:
             linked_ids = set(linked_evidence.scalars())
             accepted_status = "supported"
         else:
-            claim_ids = [claim.id]
+            conclusion = (
+                await conditional_claim(self.s, dispute, claim, conditional_claim_id)
+                if outcome == "conditional"
+                else claim
+            )
+            claim_ids = [conclusion.id]
             linked_ids = None
             accepted_status = "supported"
 
@@ -560,6 +588,7 @@ class Repository:
                 continue
             found[source_id] = EvidenceSource(
                 source_id=source_id,
+                lineage_key=(source.metadata_json or {}).get("lineage_key", ""),
                 normalized_url=source.normalized_url or "",
                 publisher_key=source.publisher_key or "",
                 content_hash=source.content_hash or "",
@@ -579,6 +608,7 @@ class Repository:
         conditional_statement: str,
         conditions: list[str],
         evidence_source_ids: list[str],
+        conditional_claim_id: UUID | None = None,
     ) -> models.Belief:
         if outcome not in {"keep_old", "adopt_new", "conditional", "unresolved"}:
             raise ValueError(f"unsupported dispute outcome: {outcome}")
@@ -609,18 +639,25 @@ class Repository:
             }:
                 raise ValueError("legacy resolved dispute cannot be reopened")
 
+            conclusion_claim = (
+                await conditional_claim(self.s, dispute, claim, conditional_claim_id)
+                if outcome == "conditional"
+                else claim
+            )
             if outcome == "conditional" and (not conditional_statement.strip() or not conditions):
                 raise ValueError("conditional resolution requires a statement and conditions")
             if outcome == "conditional" and (
-                normalize_text_key(conditional_statement) != normalize_text_key(claim.statement)
+                normalize_text_key(conditional_statement)
+                != normalize_text_key(conclusion_claim.statement)
                 or any(
-                    normalize_text_key(condition) not in normalize_text_key(claim.statement)
+                    normalize_text_key(condition)
+                    not in normalize_text_key(conclusion_claim.statement)
                     for condition in conditions
                 )
             ):
                 raise ValueError("conditional conclusion must be the supported conditional claim")
             qualified = await self.qualified_resolution_sources(
-                dispute, belief, claim, outcome, evidence_source_ids
+                dispute, belief, claim, outcome, evidence_source_ids, conditional_claim_id
             )
             independent = independent_source_representatives(qualified)
             required = agent_config().learning.min_independent_sources_for_dispute_resolution
@@ -638,7 +675,18 @@ class Repository:
                 prior_status = (dispute.previous_belief_state or {}).get("status")
                 if not prior_status:
                     raise ValueError("cannot restore a belief without preserved prior state")
-                belief.status = BeliefStatus(prior_status)
+                another_open = await self.s.scalar(
+                    select(models.Dispute.id)
+                    .where(
+                        models.Dispute.belief_id == belief.id,
+                        models.Dispute.id != dispute.id,
+                        models.Dispute.status.in_(["open", "investigating", "unresolved"]),
+                    )
+                    .limit(1)
+                )
+                belief.status = (
+                    BeliefStatus.DISPUTED if another_open else BeliefStatus(prior_status)
+                )
                 dispute.status = DisputeStatus.RESOLVED_OLD
             elif outcome in {"adopt_new", "conditional"}:
                 belief.status = (
@@ -654,9 +702,9 @@ class Repository:
                     for source in independent
                 ) / len(independent)
                 resolved_belief = models.Belief(
-                    topic=claim.topic or belief.topic,
+                    topic=conclusion_claim.topic or belief.topic,
                     statement=claim.statement if outcome == "adopt_new" else conditional_statement,
-                    explanation=claim.reasoning,
+                    explanation=conclusion_claim.reasoning,
                     status=BeliefStatus.SUPPORTED,
                     confidence=min(0.7, score),
                     evidence_score=score,
@@ -683,7 +731,7 @@ class Repository:
                                 "evidence", resolved_belief.id, source_id, "web_source", "support"
                             ),
                             strength=min(1.0, source_info.credibility_score),
-                            excerpt="",
+                            excerpt=await self.supported_excerpt(conclusion_claim.id, source_id),
                         )
                     )
                 self.s.add(
@@ -701,10 +749,12 @@ class Repository:
 
             dispute.resolution_notes = rationale
             dispute.resolution_metadata = {
+                **(dispute.resolution_metadata or {}),
                 "outcome": outcome,
                 "conditions": conditions,
                 "evidence_source_ids": [source.source_id for source in independent],
                 "resolved_belief_id": str(resolved_belief.id),
+                "conditional_claim_id": str(conditional_claim_id) if conditional_claim_id else None,
             }
             dispute.resolved_at = None if outcome == "unresolved" else datetime.now(UTC)
             self.s.add(
@@ -737,6 +787,7 @@ class Repository:
                 "completeness": result.completeness,
                 "calibration": result.calibration,
                 "feedback": result.feedback,
+                "audit": result.audit,
             },
             questions=result.questions,
             answers=result.answers,

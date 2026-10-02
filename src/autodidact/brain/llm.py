@@ -27,6 +27,7 @@ class LLM(ABC):
             + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         )
         raw = await self.text(system, instruction, temperature=0.1)
+        self.last_response = raw
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.strip("`")
@@ -46,27 +47,79 @@ class MockLLM(LLM):
         # Minimal deterministic fixtures for smoke tests and first boot.
         name = schema.__name__
         if name == "SearchQueryPlan":
-            return schema.model_validate({"queries": ["无人机自主系统 基础 架构"], "rationale": "bootstrap"})
+            return schema.model_validate(
+                {"queries": ["无人机自主系统 基础 架构"], "rationale": "bootstrap"}
+            )
         if name == "LearningResult":
-            return schema.model_validate({
-                "claims": [], "concepts": [], "unanswered_questions": ["需要配置真实 LLM"],
-                "contradictions": [], "discovered_dependencies": []
-            })
+            return schema.model_validate(
+                {
+                    "claims": [],
+                    "concepts": [],
+                    "unanswered_questions": ["需要配置真实 LLM"],
+                    "contradictions": [],
+                    "discovered_dependencies": [],
+                }
+            )
         if name == "EvaluationResult":
-            return schema.model_validate({
-                "score": 0.0, "passed": False, "factual_accuracy": 0.0, "reasoning": 0.0,
-                "transfer": 0.0, "completeness": 0.0, "calibration": 1.0,
-                "questions": [], "answers": [], "feedback": "mock provider"
-            })
+            return schema.model_validate(
+                {
+                    "score": 0.0,
+                    "passed": False,
+                    "factual_accuracy": 0.0,
+                    "reasoning": 0.0,
+                    "transfer": 0.0,
+                    "completeness": 0.0,
+                    "calibration": 1.0,
+                    "questions": [],
+                    "answers": [],
+                    "feedback": "mock provider",
+                }
+            )
         if name == "ReflectionResult":
-            return schema.model_validate({
-                "failure_reason": "missing_model", "missing_knowledge": [],
-                "recommended_actions": ["configure real LLM"], "lessons": []
-            })
+            return schema.model_validate(
+                {
+                    "failure_reason": "missing_model",
+                    "missing_knowledge": [],
+                    "recommended_actions": ["configure real LLM"],
+                    "lessons": [],
+                }
+            )
         if name == "ContradictionResult":
-            return schema.model_validate({"relation": "unrelated", "score": 0.0, "explanation": "mock"})
+            return schema.model_validate(
+                {"relation": "unrelated", "score": 0.0, "explanation": "mock"}
+            )
         if name == "CandidateGoalList":
             return schema.model_validate({"goals": []})
+        if name == "ResearchAnswer":
+            return schema.model_validate(
+                {
+                    "explanation": "请配置真实模型，并先执行学习目标。",
+                    "belief_ids": [],
+                    "missing_knowledge": [],
+                }
+            )
+        if name in {"ExamPaper", "SkillDrafts"}:
+            return schema.model_validate(
+                {"questions": []} if name == "ExamPaper" else {"skills": []}
+            )
+        if name == "ExamAnswer":
+            return schema.model_validate({"answer": "Mock：尚未配置模型", "confidence": 0})
+        if name == "AnswerGrade":
+            return schema.model_validate(
+                {
+                    "correct": False,
+                    "factual_accuracy": 0,
+                    "reasoning": 0,
+                    "completeness": 0,
+                    "explanation": "mock",
+                }
+            )
+        if name in {"BenchmarkGrade", "BenchmarkJudge"}:
+            return schema.model_validate({"score": 0, "rationale": "mock"})
+        if name == "DisputeResolutionProposal":
+            return schema.model_validate(
+                {"outcome": "unresolved", "rationale": "Mock 不作真实决议"}
+            )
         raise RuntimeError(f"MockLLM has no fixture for schema {name}")
 
 
@@ -81,10 +134,14 @@ class OpenAICompatibleLLM(LLM):
         self.base_url = settings.llm_base_url.rstrip("/")
         self.api_key = settings.llm_api_key
         self.default_temperature = settings.llm_temperature
+        self.max_output_tokens = settings.llm_max_output_tokens
+        self.last_usage: dict = {}
 
     async def text(self, system: str, user: str, *, temperature: float | None = None) -> str:
+        self.last_usage = {}
         payload: dict[str, Any] = {
             "model": self.model_name,
+            "max_tokens": self.max_output_tokens,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -93,9 +150,12 @@ class OpenAICompatibleLLM(LLM):
         }
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
+            response = await client.post(
+                f"{self.base_url}/chat/completions", json=payload, headers=headers
+            )
             response.raise_for_status()
             data = response.json()
+        self.last_usage = data.get("usage", {})
         return data["choices"][0]["message"]["content"]
 
 

@@ -2,20 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
-from pathlib import Path
 from typing import Literal
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from autodidact import models  # noqa: F401
 from autodidact.config import runtime_settings
 from autodidact.db import Base
+from autodidact.resources import resource_root
 
-HEAD_REVISION = "20260920_0003"
+HEAD_REVISION = "20261002_0004"
+EPISTEMIC_REVISION = "20260920_0003"
+POST_EPISTEMIC_TABLES = {"operation_events", "research_reports"}
 SOURCE_PROVENANCE_REVISION = "20260915_0002"
 POST_BASELINE_COLUMNS = {
     "sources": {"normalized_url", "publisher_key", "quality_class", "quality_reason"},
@@ -27,12 +29,16 @@ POST_SOURCE_PROVENANCE_COLUMNS = {
 }
 POST_SOURCE_PROVENANCE_TABLES = {"claim_evidence"}
 BASELINE_REVISION = "20260914_0001"
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = resource_root()
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 
 MigrationAction = Literal[
-    "upgrade", "stamp_then_upgrade", "stamp_source_provenance_then_upgrade", "stamp_head"
+    "upgrade",
+    "stamp_then_upgrade",
+    "stamp_source_provenance_then_upgrade",
+    "stamp_epistemic_then_upgrade",
+    "stamp_head",
 ]
 
 
@@ -59,11 +65,18 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
-def source_provenance_schema_columns() -> dict[str, set[str]]:
-    source_provenance = {
-        table_name: set(column_names)
-        for table_name, column_names in expected_schema_columns().items()
+def epistemic_schema_columns() -> dict[str, set[str]]:
+    columns = {
+        name: set(values)
+        for name, values in expected_schema_columns().items()
+        if name not in POST_EPISTEMIC_TABLES
     }
+    columns["skills"].discard("metadata_json")
+    return columns
+
+
+def source_provenance_schema_columns() -> dict[str, set[str]]:
+    source_provenance = epistemic_schema_columns()
     for table_name, column_names in POST_SOURCE_PROVENANCE_COLUMNS.items():
         source_provenance[table_name].difference_update(column_names)
     for table_name in POST_SOURCE_PROVENANCE_TABLES:
@@ -90,6 +103,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == epistemic_schema_columns():
+        return "stamp_epistemic_then_upgrade"
 
     source_provenance = source_provenance_schema_columns()
     if actual == source_provenance:
@@ -138,6 +153,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, BASELINE_REVISION)
     elif action == "stamp_source_provenance_then_upgrade":
         command.stamp(config, SOURCE_PROVENANCE_REVISION)
+    elif action == "stamp_epistemic_then_upgrade":
+        command.stamp(config, EPISTEMIC_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")
@@ -147,4 +164,5 @@ async def upgrade_database(engine: AsyncEngine) -> None:
     """Upgrade a fresh, Alembic-managed, or verified legacy database to head."""
     config = alembic_config()
     async with engine.begin() as connection:
+        await connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 718204611})
         await connection.run_sync(_run_upgrade, config)

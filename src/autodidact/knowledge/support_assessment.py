@@ -14,6 +14,7 @@ from autodidact.knowledge.claim_support import (
     ClaimSupportValidation,
     SourceText,
 )
+from autodidact.runtime import BudgetExceeded
 from autodidact.schemas import ClaimDraft
 
 log = logging.getLogger(__name__)
@@ -72,6 +73,8 @@ class ClaimSupportAssessor:
                 )
                 status = "supported" if verdict.relation == "supports" else verdict.relation
                 reason = f"{self.llm.provider_name}/{self.llm.model_name}: {verdict.reason}"
+            except BudgetExceeded:
+                raise
             except Exception as exc:  # noqa: BLE001 - provider failure leaves claim unverified.
                 log.warning("Claim support assessment unavailable: %s", exc)
                 status = "unclear"

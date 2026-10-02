@@ -6,4 +6,6 @@ __pycache__/
 .ruff_cache/
 .browser/
 logs/
+build/
+dist/
 .DS_Store

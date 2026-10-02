@@ -17,6 +17,8 @@ class SourceDocument(BaseModel):
     publisher_key: str = ""
     title: str = ""
     text: str
+    lineage_key: str = ""
+    metadata: dict = Field(default_factory=dict)
     source_type: str = "web"
     quality_class: str = "ordinary_web"
     quality_reason: str = ""
@@ -69,6 +71,7 @@ class EvaluationResult(BaseModel):
     questions: list[str] = Field(default_factory=list)
     answers: list[str] = Field(default_factory=list)
     feedback: str = ""
+    audit: dict = Field(default_factory=dict)
 
 
 class ContradictionResult(BaseModel):
@@ -82,6 +85,7 @@ class DisputeResolutionProposal(BaseModel):
     rationale: str = Field(min_length=1, max_length=4000)
     evidence_source_ids: list[str] = Field(default_factory=list)
     conditional_statement: str = ""
+    conditional_claim_id: UUID | None = None
     conditions: list[str] = Field(default_factory=list)
 
 
