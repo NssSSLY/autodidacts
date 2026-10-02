@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -294,3 +295,62 @@ class ResearchReport(Base):
     report_key: Mapped[str] = mapped_column(String(200), nullable=False)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SourceLink(Base):
+    __tablename__ = "source_links"
+    __table_args__ = (
+        UniqueConstraint("dedup_key", name="uq_source_links_relation"),
+        Index("ix_source_links_from", "from_url", postgresql_using="hash"),
+        Index("ix_source_links_to", "to_url", postgresql_using="hash"),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    source_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("sources.id"))
+    dedup_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    from_url: Mapped[str] = mapped_column(Text, nullable=False)
+    to_url: Mapped[str] = mapped_column(Text, nullable=False)
+    relation: Mapped[str] = mapped_column(String(30), nullable=False)
+    details: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+
+
+class LearningStep(Base):
+    __tablename__ = "learning_steps"
+    __table_args__ = (
+        UniqueConstraint("learning_session_id", "kind", "step_key", name="uq_learning_steps_item"),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    learning_session_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("learning_sessions.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    step_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RetrievalEntry(Base):
+    __tablename__ = "retrieval_entries"
+    __table_args__ = (
+        UniqueConstraint("entity_kind", "entity_id", name="uq_retrieval_entity"),
+        Index(
+            "ix_retrieval_embedding_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        Index(
+            "ix_retrieval_lexemes",
+            text("to_tsvector('simple'::regconfig, lexemes)"),
+            postgresql_using="gin",
+        ),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    entity_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    lexemes: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

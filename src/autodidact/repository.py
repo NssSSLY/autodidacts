@@ -11,6 +11,7 @@ from autodidact import models
 from autodidact.config import agent_config
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
 from autodidact.knowledge.claim_support import ClaimEvidenceVerification
+from autodidact.knowledge.lineage import SourceLineage
 from autodidact.knowledge.resolution_claim import conditional_claim
 from autodidact.knowledge.sources import (
     EvidenceSource,
@@ -20,6 +21,7 @@ from autodidact.knowledge.sources import (
 )
 from autodidact.learning_state import LearningState
 from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
+from autodidact.retrieval import RetrievalIndex
 from autodidact.schemas import CandidateGoal, ClaimDraft, SourceDocument
 
 _ACTIVE_GOAL_STATUSES = (
@@ -57,6 +59,8 @@ def _expected_unique_violation(exc: IntegrityError, constraint: str) -> bool:
 class Repository(LearningState):
     def __init__(self, session: AsyncSession):
         self.s = session
+        self.lineage = SourceLineage(session)
+        self.index = RetrievalIndex(session)
 
     async def get_or_create_agent(self, name: str, mission: str, focus: str) -> models.Agent:
         q = await self.s.execute(select(models.Agent).where(models.Agent.name == name))
@@ -104,6 +108,8 @@ class Repository(LearningState):
             priority_score=score,
         )
         self.s.add(goal)
+        await self.s.flush()
+        await self.index.sync("goal", goal)
         await self.s.commit()
         await self.s.refresh(goal)
         return goal, True
@@ -130,10 +136,25 @@ class Repository(LearningState):
         confidence_after: float | None = None,
         *,
         max_retry: int | None = None,
+        attempt: models.LearningSession | None = None,
     ) -> None:
+        terminal = status in (GoalStatus.PASSED, GoalStatus.FAILED, GoalStatus.BLOCKED)
+        if attempt and (attempt.result or {}).get("goal_outcome_finalized"):
+            recorded = (attempt.result or {}).get("goal_outcome", {})
+            if terminal and recorded:
+                goal.status = recorded["status"]
+                goal.retry_count = recorded["retry_count"]
+                goal.confidence_after = recorded["confidence_after"]
+                goal.completed_at = (
+                    datetime.fromisoformat(recorded["completed_at"])
+                    if recorded["completed_at"]
+                    else None
+                )
+                await self.s.commit()
+            return
         if goal.started_at is None:
             goal.started_at = datetime.now(UTC)
-        if status == GoalStatus.FAILED:
+        if status == GoalStatus.FAILED and goal.status != GoalStatus.FAILED:
             goal.retry_count += 1
             if max_retry is not None and goal.retry_count >= max_retry:
                 status = GoalStatus.BLOCKED
@@ -142,6 +163,17 @@ class Repository(LearningState):
             goal.completed_at = datetime.now(UTC)
         if confidence_after is not None:
             goal.confidence_after = confidence_after
+        if attempt and terminal:
+            attempt.result = {
+                **(attempt.result or {}),
+                "goal_outcome_finalized": True,
+                "goal_outcome": {
+                    "status": status,
+                    "retry_count": goal.retry_count,
+                    "confidence_after": goal.confidence_after,
+                    "completed_at": goal.completed_at.isoformat() if goal.completed_at else None,
+                },
+            }
         await self.s.commit()
 
     async def create_learning_session(self, goal_id: UUID, plan: dict) -> models.LearningSession:
@@ -176,6 +208,8 @@ class Repository(LearningState):
                 if not getattr(found, field, None) and value:
                     setattr(found, field, value)
                     changed = True
+            if doc.metadata:
+                changed = True
             if doc.lineage_key and not (found.metadata_json or {}).get("lineage_key"):
                 found.metadata_json = {
                     **(found.metadata_json or {}),
@@ -183,8 +217,15 @@ class Repository(LearningState):
                     "lineage_key": doc.lineage_key,
                 }
                 changed = True
+            await self.lineage.record(found, doc)
             if changed:
-                await self.s.commit()
+                found.metadata_json = {
+                    **(found.metadata_json or {}),
+                    **doc.metadata,
+                    "lineage_key": doc.lineage_key
+                    or (found.metadata_json or {}).get("lineage_key", ""),
+                }
+            await self.s.commit()
             return found
         item = models.Source(
             url=doc.url,
@@ -201,6 +242,8 @@ class Repository(LearningState):
             metadata_json={**doc.metadata, "lineage_key": doc.lineage_key},
         )
         self.s.add(item)
+        await self.s.flush()
+        await self.lineage.record(item, doc)
         await self.s.commit()
         await self.s.refresh(item)
         return item
@@ -228,6 +271,8 @@ class Repository(LearningState):
         )
         self.s.add(item)
         try:
+            await self.s.flush()
+            await self.index.sync("claim", item)
             await self.s.commit()
         except IntegrityError as exc:
             await self.s.rollback()
@@ -357,6 +402,13 @@ class Repository(LearningState):
         statement_key = normalize_text_key(claim.statement)
         for existing in q.scalars():
             if normalize_text_key(existing.statement) == statement_key:
+                processed = list((existing.metadata_json or {}).get("promoted_claim_ids", []))
+                if str(claim.id) in processed:
+                    return existing
+                existing.metadata_json = {
+                    **(existing.metadata_json or {}),
+                    "promoted_claim_ids": [*processed, str(claim.id)],
+                }
                 self.s.add(
                     models.BeliefHistory(
                         belief_id=existing.id,
@@ -382,6 +434,7 @@ class Repository(LearningState):
             evidence_score=claim.confidence if evidence_score is None else evidence_score,
             test_score=test_score,
             stability_score=0.3 if verified else 0.1,
+            metadata_json={"promoted_claim_ids": [str(claim.id)]},
             source_count=(
                 len(claim.source_ids)
                 if independent_source_count is None
@@ -389,8 +442,8 @@ class Repository(LearningState):
             ),
         )
         self.s.add(belief)
-        await self.s.commit()
-        await self.s.refresh(belief)
+        await self.s.flush()
+        await self.index.sync("belief", belief)
         hist = models.BeliefHistory(
             belief_id=belief.id,
             action="created",
@@ -576,7 +629,7 @@ class Repository(LearningState):
                 models.ClaimEvidence.status == accepted_status,
             )
         )
-        found: dict[str, EvidenceSource] = {}
+        found: dict[str, models.Source] = {}
         for record in result.scalars():
             source_id = str(record.source_id)
             if source_id not in requested or (
@@ -586,16 +639,8 @@ class Repository(LearningState):
             source = await self.s.get(models.Source, record.source_id)
             if source is None or source.evidence_level <= 0:
                 continue
-            found[source_id] = EvidenceSource(
-                source_id=source_id,
-                lineage_key=(source.metadata_json or {}).get("lineage_key", ""),
-                normalized_url=source.normalized_url or "",
-                publisher_key=source.publisher_key or "",
-                content_hash=source.content_hash or "",
-                evidence_level=source.evidence_level,
-                credibility_score=source.credibility_score,
-            )
-        return list(found.values())
+            found[source_id] = source
+        return await self.lineage.evidence_sources(list(found.values()))
 
     async def apply_dispute_resolution(
         self,
@@ -766,6 +811,10 @@ class Repository(LearningState):
                     reason=rationale,
                 )
             )
+            await self.s.flush()
+            await self.index.sync("belief", resolved_belief)
+            if resolved_belief.id != belief.id:
+                await self.index.sync("belief", belief)
             await self.s.commit()
             return resolved_belief
         except Exception:
@@ -775,6 +824,19 @@ class Repository(LearningState):
     async def save_evaluation(
         self, goal_id: UUID, learning_session_id: UUID, result
     ) -> models.Evaluation:
+        existing = await self.s.scalar(
+            select(models.Evaluation)
+            .where(models.Evaluation.learning_session_id == learning_session_id)
+            .order_by(models.Evaluation.created_at.desc())
+            .limit(1)
+        )
+        if (
+            existing
+            and existing.score == result.score
+            and existing.passed == result.passed
+            and (existing.components or {}).get("audit") == result.audit
+        ):
+            return existing
         item = models.Evaluation(
             goal_id=goal_id,
             learning_session_id=learning_session_id,

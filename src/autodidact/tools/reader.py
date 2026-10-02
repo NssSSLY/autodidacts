@@ -39,8 +39,12 @@ class WebReader:
                 raise ValueError(f"Unsupported content type: {content_type}")
             decoded = body.decode(encoding, errors="replace")
             lineage = normalize_url(final_url)
+            lineage_links = []
             if "text/html" in content_type:
                 soup = BeautifulSoup(decoded, "html.parser")
+                from autodidact.knowledge.lineage import extract_lineage
+
+                lineage_links = extract_lineage(soup, final_url, url)
                 canonical = soup.find("link", rel="canonical")
                 if canonical and canonical.get("href"):
                     lineage = normalize_url(urljoin(final_url, canonical["href"]))
@@ -67,6 +71,7 @@ class WebReader:
                 credibility_score=assessment.credibility_score,
                 metadata={
                     "canonical_url": lineage,
+                    "lineage_links": lineage_links,
                     "bytes": len(body),
                     "content_type": content_type,
                 },

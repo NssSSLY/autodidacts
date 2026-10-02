@@ -94,3 +94,11 @@ Playwright 网页模型适配器（PlaywrightWebModelAdapter）
 ## 搜索提供方策略
 
 `SearchProvider` 隔离搜索服务实现。配置 Brave Search API 时，运行时优先使用结构化 API，并将 DuckDuckGo HTML 保留为无密钥后备；主提供方网络错误、协议错误或空结果只会触发下一提供方，不会直接终止学习器。
+
+## 来源依赖、持久重放与统一召回增量
+
+迁移 `20261002_0005` 增加 `source_links`、`learning_steps` 和 `retrieval_entries`，不修改旧认知行。`SourceLineage` 区分共同工作/转载依赖与普通引用，依赖图闭包用于晋升、决议及独立核源计票；网页声明只能保守减少独立票数。
+
+`DurableSteps` 以会话内工作项唯一键保存成功输出，新会话从规划前开始留痕。模型、查询材料和角色隔离保持不变，重放调用使用冻结输入，数据库副作用通过幂等保护。旧版缺少细粒度快照的会话仍保留证据后重试。
+
+`HybridRetriever` 在 Belief / Claim / Goal 上融合关键词与语义排名；工作台只检索已接受且无开放争议的信念。检索索引可重建，不授予候选主张真值资格。完整使用与局限见 [来源血缘阶段续跑与混合检索](doc/来源血缘阶段续跑与混合检索.md)。

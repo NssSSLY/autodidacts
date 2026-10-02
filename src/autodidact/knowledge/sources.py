@@ -193,6 +193,7 @@ def _is_academic_host(host: str) -> bool:
 class EvidenceSource:
     source_id: str
     lineage_key: str = ""
+    dependency_keys: frozenset[str] = frozenset()
     normalized_url: str = ""
     publisher_key: str = ""
     content_hash: str = ""
@@ -234,7 +235,8 @@ def independent_source_representatives(sources: list[EvidenceSource]) -> list[Ev
             same_lineage = bool(
                 left.lineage_key and right.lineage_key and left.lineage_key == right.lineage_key
             )
-            if same_publisher or same_content or same_lineage:
+            dependencies = bool(left.dependency_keys.intersection(right.dependency_keys))
+            if same_publisher or same_content or same_lineage or dependencies:
                 union(left_index, right_index)
 
     groups: dict[int, list[EvidenceSource]] = {}

@@ -7,6 +7,7 @@ import logging
 import typer
 from rich import print
 
+from autodidact.advanced_commands import register_advanced_commands
 from autodidact.agent import AutonomousLearner
 from autodidact.brain.factory import build_judge
 from autodidact.brain.llm import build_llm
@@ -19,6 +20,7 @@ from autodidact.runtime import controller_lock
 
 app = typer.Typer(no_args_is_help=True)
 register_commands(app)
+register_advanced_commands(app)
 
 
 def configure_logging() -> None:

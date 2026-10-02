@@ -16,8 +16,8 @@ class LearningState:
     async def recover_interrupted(self):
         """Called only with database-wide controller ownership.
 
-        Preserve partial evidence and close interrupted attempts; retry the goal
-        rather than silently pretending that an interrupted attempt completed.
+        Resume durable attempts in place; retain the legacy retry path only for
+        attempts that predate the durable protocol.
         """
         states = ["planned", "researching", "synthesizing", "testing", "reflecting"]
         goals = (
@@ -32,6 +32,17 @@ class LearningState:
                     )
                 )
             ).all()
+            durable = [
+                a for a in sessions if (a.plan or {}).get("resume_protocol") == "durable_replay_v1"
+            ]
+            if durable:
+                for attempt in durable:
+                    attempt.result = {
+                        **(attempt.result or {}),
+                        "recovery": "resume_saved_work",
+                        "interrupted_stage": goal.status,
+                    }
+                continue
             for attempt in sessions:
                 attempt.result = {
                     **(attempt.result or {}),
@@ -55,10 +66,24 @@ class LearningState:
         await self.s.commit()
         return len(goals)
 
+    async def resumable_attempt(self):
+        return await self.s.scalar(
+            select(models.LearningSession)
+            .join(models.Goal, models.Goal.id == models.LearningSession.goal_id)
+            .where(
+                models.LearningSession.completed_at.is_(None),
+                models.LearningSession.plan["resume_protocol"].astext == "durable_replay_v1",
+                models.Goal.status != "blocked",
+            )
+            .order_by(models.LearningSession.created_at)
+            .limit(1)
+        )
+
     async def checkpoint(self, attempt, stage: str, **payload):
         previous = attempt.result or {}
         stages = list(previous.get("checkpoints", []))
-        stages.append({"stage": stage, "at": datetime.now(UTC).isoformat()})
+        if not stages or stages[-1]["stage"] != stage:
+            stages.append({"stage": stage, "at": datetime.now(UTC).isoformat()})
         attempt.result = {**previous, **payload, "checkpoint": stage, "checkpoints": stages}
         await self.s.commit()
 
@@ -238,7 +263,9 @@ class LearningState:
         ).all()
         return "\n".join(passages)
 
-    async def record_skill_outcome(self, skill_ids, passed):
+    async def record_skill_outcome(self, skill_ids, passed, attempt=None):
+        if attempt and (attempt.result or {}).get("skills_recorded"):
+            return
         for skill_id in skill_ids:
             skill = await self.s.get(models.Skill, skill_id)
             if skill:
@@ -247,4 +274,6 @@ class LearningState:
                 skill.confidence = (skill.success_count + 1) / (
                     skill.success_count + skill.failure_count + 2
                 )
+        if attempt:
+            attempt.result = {**(attempt.result or {}), "skills_recorded": True}
         await self.s.commit()

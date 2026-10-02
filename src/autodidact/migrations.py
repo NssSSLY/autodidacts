@@ -15,7 +15,9 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261002_0004"
+HEAD_REVISION = "20261002_0005"
+OPERATIONS_REVISION = "20261002_0004"
+POST_OPERATIONS_TABLES = {"source_links", "learning_steps", "retrieval_entries"}
 EPISTEMIC_REVISION = "20260920_0003"
 POST_EPISTEMIC_TABLES = {"operation_events", "research_reports"}
 SOURCE_PROVENANCE_REVISION = "20260915_0002"
@@ -38,6 +40,7 @@ MigrationAction = Literal[
     "stamp_then_upgrade",
     "stamp_source_provenance_then_upgrade",
     "stamp_epistemic_then_upgrade",
+    "stamp_operations_then_upgrade",
     "stamp_head",
 ]
 
@@ -65,10 +68,18 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
+def operational_schema_columns() -> dict[str, set[str]]:
+    return {
+        name: set(values)
+        for name, values in expected_schema_columns().items()
+        if name not in POST_OPERATIONS_TABLES
+    }
+
+
 def epistemic_schema_columns() -> dict[str, set[str]]:
     columns = {
         name: set(values)
-        for name, values in expected_schema_columns().items()
+        for name, values in operational_schema_columns().items()
         if name not in POST_EPISTEMIC_TABLES
     }
     columns["skills"].discard("metadata_json")
@@ -103,6 +114,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == operational_schema_columns():
+        return "stamp_operations_then_upgrade"
     if actual == epistemic_schema_columns():
         return "stamp_epistemic_then_upgrade"
 
@@ -155,6 +168,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, SOURCE_PROVENANCE_REVISION)
     elif action == "stamp_epistemic_then_upgrade":
         command.stamp(config, EPISTEMIC_REVISION)
+    elif action == "stamp_operations_then_upgrade":
+        command.stamp(config, OPERATIONS_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

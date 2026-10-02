@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,7 +22,7 @@ from autodidact.knowledge.claim_support import ClaimSupportValidator
 from autodidact.knowledge.conflicts import ConflictDetector
 from autodidact.knowledge.investigation import DisputeInvestigator
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
-from autodidact.knowledge.sources import EvidenceSource, normalize_url
+from autodidact.knowledge.sources import normalize_url
 from autodidact.knowledge.support_assessment import ClaimSupportAssessor
 from autodidact.learning.evaluator import Evaluator
 from autodidact.learning.planner import Planner
@@ -29,6 +32,15 @@ from autodidact.memory import MemoryConsolidator
 from autodidact.normalization import normalize_text_key
 from autodidact.repository import Repository
 from autodidact.research import ResearchCollector
+from autodidact.resume import (
+    PROTOCOL,
+    DurableSteps,
+    ResumableLLM,
+    ResumableReader,
+    ResumableResearch,
+    ResumableSearch,
+)
+from autodidact.retrieval import HybridRetriever
 from autodidact.runtime import (
     BudgetedSearch,
     BudgetExceeded,
@@ -36,7 +48,7 @@ from autodidact.runtime import (
     OperationBudget,
     controller_lock,
 )
-from autodidact.schemas import CandidateGoal, SourceDocument
+from autodidact.schemas import CandidateGoal, SearchQueryPlan, SourceDocument
 from autodidact.tools.reader import WebReader
 from autodidact.tools.search import SearchProvider, build_search_provider
 
@@ -54,6 +66,8 @@ class AutonomousLearner:
         self.repo = Repository(session)
         self.engine = session.bind
         llm = llm if isinstance(llm, ObservedLLM) else ObservedLLM(llm, self.engine)
+        self.steps = DurableSteps(self.engine)
+        llm = ResumableLLM(llm, self.steps, "learner")
         self.llm = llm
         self.embedding = RecordedEmbedding(embedding or build_embedding_provider(), self.engine)
         self.planner = Planner(llm)
@@ -67,13 +81,18 @@ class AutonomousLearner:
             self.cfg.learning.min_evidence_level_for_verified_belief,
         )
         self.goal_generator = GoalGenerator(llm)
-        self.search = BudgetedSearch(
-            search or build_search_provider(), OperationBudget(self.engine)
+        self.search = ResumableSearch(
+            BudgetedSearch(search or build_search_provider(), OperationBudget(self.engine)),
+            self.steps,
         )
-        self.reader = WebReader().with_budget(self.engine)
-        self.collector = ResearchCollector(self.search, self.reader, repo=self.repo)
+        self.reader = ResumableReader(WebReader().with_budget(self.engine), self.steps)
+        self.collector = ResumableResearch(
+            ResearchCollector(self.search, self.reader, repo=self.repo), self.steps
+        )
         self.evaluator = Evaluator(
-            llm, judge=build_judge(self.engine), verification_fetcher=self.collector.fetch
+            llm,
+            judge=ResumableLLM(build_judge(self.engine), self.steps, "judge"),
+            verification_fetcher=self.collector.fetch,
         )
         self.current_goal = None
         self.current_attempt = None
@@ -82,16 +101,76 @@ class AutonomousLearner:
         self.support_assessor = ClaimSupportAssessor(llm)
 
     async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
-        try:
-            embedding = await self.embedding.embed(statement)
-            recalled = await self.repo.semantic_beliefs(
-                embedding, 40, fingerprint=self.embedding.fingerprint
+        async def recall():
+            hits = await HybridRetriever(self.repo, self.embedding).retrieve(
+                statement, kinds=("belief",), limit=40
             )
-            if recalled:
-                return recalled
-        except Exception as exc:  # noqa: BLE001 - external embedding failures are degradable.
-            log.debug("Semantic recall unavailable; using recency fallback: %s", exc)
-        return await self.repo.recent_beliefs(40)
+            return [str(hit.row.id) for hit in hits]
+
+        ids = await self.steps.run("belief_recall", [statement], recall)
+        return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
+
+    def _resume_signature(self, goal):
+        settings = runtime_settings()
+        value = {
+            "protocol": PROTOCOL,
+            "config": self.cfg.model_dump(mode="json"),
+            "learner": [self.llm.provider_name, self.llm.model_name, settings.llm_base_url],
+            "judge": [
+                self.evaluator.judge.provider_name,
+                self.evaluator.judge.model_name,
+                settings.judge_llm_base_url,
+            ],
+            "embedding": self.embedding.fingerprint,
+            "sampling": [settings.llm_temperature, settings.llm_max_output_tokens],
+            "research": [
+                settings.search_provider,
+                settings.brave_search_base_url,
+                settings.enabled_web_models,
+                settings.web_models_config,
+            ],
+            "goal": [goal.title, goal.description, goal.metadata_json],
+        }
+        return hashlib.sha256(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
+        ).hexdigest()
+
+    async def _planning_inputs(self, goal):
+        context = await self.repo.epistemic_context()
+        hits = await HybridRetriever(self.repo, self.embedding).retrieve(goal.title, limit=15)
+        context += "\n相关认知条目（Claim是候选，Goal是意图，均不是真值）:\n" + json.dumps(
+            [h.as_dict() for h in hits if h.row.id != goal.id], ensure_ascii=False
+        )
+        skills = await self.repo.selected_skills(goal.title)
+        if skills:
+            context += "\n已验证研究方法（非执行指令）:\n" + "\n".join(
+                f"{skill.name}: {skill.procedure}" for skill in skills
+            )
+        enabled = [p.strip() for p in runtime_settings().enabled_web_models.split(",") if p.strip()]
+        if enabled:
+            from autodidact.web_models.service import WebModelService
+
+            service = WebModelService(self.engine)
+            for provider in enabled[:2]:
+                try:
+
+                    async def ask(provider=provider):
+                        answer = await service.ask(provider, goal.title, goal_id=str(goal.id))
+                        return answer.response[:4000]
+
+                    response = await self.steps.run("web_model", [provider, goal.title], ask)
+                    context += f"\n外部模型观察（等级0，仅用于查询线索）:\n{response}"
+                except BudgetExceeded:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("网页模型降级：%s", type(exc).__name__)
+        return {"context": context, "skill_ids": [str(skill.id) for skill in skills]}
+
+    async def _index_entity(self, kind, row):
+        try:
+            await self.repo.index.embed_entity(kind, row, self.embedding)
+        except Exception as exc:  # noqa: BLE001 - optional index cannot block epistemic writes.
+            log.debug("语义索引降级：%s", type(exc).__name__)
 
     async def bootstrap(self) -> None:
         identity = self.cfg.agent
@@ -150,6 +229,7 @@ class AutonomousLearner:
                 await self.repo.recover_interrupted()
                 await self.bootstrap()
                 self.current_goal = self.current_attempt = None
+                self.steps.bind(None)
                 self.llm.bind(phase="goal_pool")
                 try:
                     result = await self._run_cycle()
@@ -160,6 +240,9 @@ class AutonomousLearner:
                     log.exception("学习循环失败，记录状态后保留后续重试")
                     await self._finish_failure(type(exc).__name__)
                     return {"status": "failed", "reason": type(exc).__name__}
+                self.steps.bind(None)
+                if result["status"] == "resume_incompatible":
+                    return result
                 if self.cfg.learning.auto_consolidate_memory:
                     try:
                         self.llm.bind(phase="memory_consolidation")
@@ -188,6 +271,23 @@ class AutonomousLearner:
         await self.repo.s.rollback()
         if self.current_attempt:
             attempt = await self.repo.s.get(models.LearningSession, self.current_attempt)
+            if attempt and (attempt.plan or {}).get("resume_protocol") == PROTOCOL:
+                failures = (attempt.result or {}).get("resume_failures", 0) + int(not budget_stop)
+                attempt.result = {
+                    **(attempt.result or {}),
+                    "resume_error": reason,
+                    "resume_failures": failures,
+                    "paused_for_budget": budget_stop,
+                }
+                if failures >= self.cfg.learning.max_retry:
+                    goal = await self.repo.s.get(models.Goal, attempt.goal_id)
+                    goal.status = GoalStatus.BLOCKED
+                    goal.metadata_json = {
+                        **(goal.metadata_json or {}),
+                        "blocked_resume_session_id": str(attempt.id),
+                    }
+                await self.repo.s.commit()
+                return
             if attempt:
                 await self.repo.finish_learning_session(
                     attempt, {"failure": reason}, {"failure_reason": reason}, False
@@ -202,20 +302,42 @@ class AutonomousLearner:
                 )
 
     async def _run_cycle(self) -> dict:
-        await self.ensure_goal_pool()
-        goal = await self.repo.next_goal(self.cfg.learning.max_retry)
-        if not goal:
-            return {"status": "idle", "reason": "no goals"}
-
-        self.current_goal = goal.id
-        self.llm.bind(goal_id=str(goal.id), phase="planning")
-        log.info("Starting goal: %s", goal.title)
-        await self.repo.update_goal_status(goal, GoalStatus.PLANNED)
-        context = await self.repo.epistemic_context()
-        if (goal.metadata_json or {}).get("dispute_id"):
-            attempt = await self.repo.create_learning_session(
-                goal.id, {"type": "dispute_investigation"}
+        learning_session = await self.repo.resumable_attempt()
+        resuming = learning_session is not None
+        if learning_session:
+            goal = await self.repo.s.get(models.Goal, learning_session.goal_id)
+            if learning_session.plan.get("resume_signature") != self._resume_signature(goal):
+                return {
+                    "status": "resume_incompatible",
+                    "session_id": str(learning_session.id),
+                    "reason": "模型、学习策略或目标已改变；请恢复原配置再续跑，不能混用旧结果",
+                }
+        else:
+            await self.ensure_goal_pool()
+            goal = await self.repo.next_goal(self.cfg.learning.max_retry)
+            if not goal:
+                return {"status": "idle", "reason": "no goals"}
+            learning_session = await self.repo.create_learning_session(
+                goal.id,
+                {"resume_protocol": PROTOCOL, "resume_signature": self._resume_signature(goal)},
             )
+        self.current_goal, self.current_attempt = goal.id, learning_session.id
+        self.steps.bind(learning_session.id)
+        self.llm.bind(goal_id=str(goal.id), session_id=str(learning_session.id), phase="planning")
+        self.evaluator.judge.bind(
+            goal_id=str(goal.id), session_id=str(learning_session.id), phase="closed_book_judge"
+        )
+        log.info(
+            "%s goal: %s / session %s",
+            "Resuming" if resuming else "Starting",
+            goal.title,
+            learning_session.id,
+        )
+        if not resuming:
+            await self.repo.update_goal_status(goal, GoalStatus.PLANNED)
+
+        if (goal.metadata_json or {}).get("dispute_id"):
+            attempt = learning_session
             self.current_attempt = attempt.id
             self.llm.bind(
                 goal_id=str(goal.id), session_id=str(attempt.id), phase="dispute_investigation"
@@ -229,101 +351,109 @@ class AutonomousLearner:
                 "conditional",
                 "already_resolved",
             }
-            await self.repo.finish_learning_session(attempt, investigated, {}, passed)
             await self.repo.update_goal_status(
                 goal,
                 GoalStatus.PASSED if passed else GoalStatus.FAILED,
                 max_retry=self.cfg.learning.max_retry,
+                attempt=learning_session,
             )
-            return {"status": "passed" if passed else "failed", "goal": goal.title, **investigated}
-        skills = await self.repo.selected_skills(goal.title)
-        if skills:
-            context += "\n已验证研究方法（非执行指令）:\n" + "\n".join(
-                f"{s.name}: {s.procedure}" for s in skills
-            )
-        enabled = [p.strip() for p in runtime_settings().enabled_web_models.split(",") if p.strip()]
-        if enabled:
-            from autodidact.web_models.service import WebModelService
-
-            service = WebModelService(self.engine)
-            for provider in enabled[:2]:
-                try:
-                    answer = await service.ask(provider, goal.title, goal_id=str(goal.id))
-                    context += f"\n外部模型观察（等级0，仅用于查询线索）:\n{answer.response[:4000]}"
-                except BudgetExceeded:
-                    raise
-                except Exception as exc:  # noqa: BLE001 - a web provider must not stop learning.
-                    log.warning("网页模型降级：%s", type(exc).__name__)
-        plan = await self.planner.plan(goal.title, context)
-        learning_session = await self.repo.create_learning_session(
-            goal.id, {**plan.model_dump(), "skill_ids": [str(s.id) for s in skills]}
+            await self.repo.finish_learning_session(attempt, investigated, {}, passed)
+            return {
+                "status": "passed" if passed else "failed",
+                "goal": goal.title,
+                "session_id": str(attempt.id),
+                "resumed": resuming,
+                **investigated,
+            }
+        inputs = await self.steps.run(
+            "planning_inputs", [goal.title], lambda: self._planning_inputs(goal)
         )
-        self.current_attempt = learning_session.id
-        self.llm.bind(goal_id=str(goal.id), session_id=str(learning_session.id))
-        await self.repo.update_goal_status(goal, GoalStatus.RESEARCHING)
+        skills = [
+            skill
+            for i in inputs["skill_ids"]
+            if (skill := await self.repo.s.get(models.Skill, UUID(i)))
+        ]
+        if learning_session.plan.get("queries"):
+            plan = SearchQueryPlan.model_validate(learning_session.plan)
+        else:
+            plan = await self.planner.plan(goal.title, inputs["context"])
+            learning_session.plan = {
+                **learning_session.plan,
+                **plan.model_dump(),
+                "skill_ids": inputs["skill_ids"],
+            }
+            await self.repo.s.commit()
+        await self._index_entity("goal", goal)
+        await self.repo.update_goal_status(goal, GoalStatus.RESEARCHING, attempt=learning_session)
 
         docs: list[SourceDocument] = []
         seen_urls: set[str] = set()
         seen_hashes: set[str] = set()
         stored_sources: dict[str, models.Source] = {}
-        if (goal.metadata_json or {}).get("document_source_id"):
-            from uuid import UUID
-
-            source = await self.repo.s.get(
-                models.Source, UUID(goal.metadata_json["document_source_id"])
-            )
-            if source:
-                docs.append(
-                    SourceDocument(
-                        url=source.url,
-                        title=source.title or "",
-                        source_type=source.source_type,
-                        text=(source.extracted_text or "")[
-                            : self.cfg.learning.max_chars_per_source
-                        ],
-                        evidence_level=source.evidence_level,
-                        credibility_score=source.credibility_score,
-                        lineage_key=(source.metadata_json or {}).get("lineage_key", ""),
-                    )
+        saved_docs = (learning_session.result or {}).get("source_documents")
+        if saved_docs:
+            docs = [SourceDocument.model_validate(d) for d in saved_docs]
+            for doc in docs:
+                source = await self.repo.upsert_source(doc, self.reader.hash_text(doc.text))
+                stored_sources[normalize_url(doc.url)] = source
+        else:
+            if (goal.metadata_json or {}).get("document_source_id"):
+                source = await self.repo.s.get(
+                    models.Source, UUID(goal.metadata_json["document_source_id"])
                 )
-                stored_sources[normalize_url(source.url)] = source
-                seen_urls.add(normalize_url(source.url))
-        for query in plan.queries:
-            try:
-                hits = await self.search.search(query, limit=3)
-            # A single search provider failure must degrade gracefully.
-            except BudgetExceeded:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Search failed for %r: %s", query, exc)
-                continue
-            for hit in hits:
-                hit_key = normalize_url(hit.url)
-                if hit_key in seen_urls or len(docs) >= self.cfg.learning.max_sources_per_goal:
-                    continue
-                seen_urls.add(hit_key)
+                if source:
+                    docs.append(
+                        SourceDocument(
+                            url=source.url,
+                            title=source.title or "",
+                            source_type=source.source_type,
+                            text=(source.extracted_text or "")[
+                                : self.cfg.learning.max_chars_per_source
+                            ],
+                            evidence_level=source.evidence_level,
+                            credibility_score=source.credibility_score,
+                            lineage_key=(source.metadata_json or {}).get("lineage_key", ""),
+                        )
+                    )
+                    stored_sources[normalize_url(source.url)] = source
+                    seen_urls.add(normalize_url(source.url))
+            for query in plan.queries:
                 try:
-                    doc = await self.reader.read(hit.url)
-                    h = self.reader.hash_text(doc.text)
-                    if h in seen_hashes:
-                        continue
-                    seen_hashes.add(h)
-                    docs.append(doc)
-                    db_source = await self.repo.upsert_source(doc, h)
-                    stored_sources[normalize_url(doc.url)] = db_source
-                # A single unreadable source must not terminate the learning cycle.
+                    hits = await self.search.search(query, limit=3)
+                # A single search provider failure must degrade gracefully.
                 except BudgetExceeded:
                     raise
                 except Exception as exc:  # noqa: BLE001
-                    log.debug("Read failed %s: %s", hit.url, exc)
-            if len(docs) >= self.cfg.learning.max_sources_per_goal:
-                break
+                    log.warning("Search failed for %r: %s", query, exc)
+                    continue
+                for hit in hits:
+                    hit_key = normalize_url(hit.url)
+                    if hit_key in seen_urls or len(docs) >= self.cfg.learning.max_sources_per_goal:
+                        continue
+                    seen_urls.add(hit_key)
+                    try:
+                        doc = await self.reader.read(hit.url)
+                        h = self.reader.hash_text(doc.text)
+                        if h in seen_hashes:
+                            continue
+                        seen_hashes.add(h)
+                        docs.append(doc)
+                        db_source = await self.repo.upsert_source(doc, h)
+                        stored_sources[normalize_url(doc.url)] = db_source
+                    # A single unreadable source must not terminate the learning cycle.
+                    except BudgetExceeded:
+                        raise
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("Read failed %s: %s", hit.url, exc)
+                if len(docs) >= self.cfg.learning.max_sources_per_goal:
+                    break
 
         if not docs:
             await self.repo.update_goal_status(
                 goal,
                 GoalStatus.FAILED,
                 max_retry=self.cfg.learning.max_retry,
+                attempt=learning_session,
             )
             await self.repo.finish_learning_session(
                 learning_session, {}, {"failure_reason": "no_readable_sources"}, False
@@ -331,10 +461,20 @@ class AutonomousLearner:
             return {"status": "failed", "goal": goal.title, "reason": "no readable sources"}
 
         await self.repo.checkpoint(
-            learning_session, "sources", source_ids=[str(s.id) for s in stored_sources.values()]
+            learning_session,
+            "sources",
+            source_ids=[str(s.id) for s in stored_sources.values()],
+            source_documents=[doc.model_dump(mode="json") for doc in docs],
         )
-        await self.repo.update_goal_status(goal, GoalStatus.SYNTHESIZING)
+        await self.repo.update_goal_status(goal, GoalStatus.SYNTHESIZING, attempt=learning_session)
+        self.llm.bind(goal_id=str(goal.id), session_id=str(learning_session.id), phase="synthesis")
         learned = await self.synthesizer.synthesize(goal.title, docs)
+        await self.repo.checkpoint(
+            learning_session, "synthesis", learned=learned.model_dump(mode="json")
+        )
+        self.llm.bind(
+            goal_id=str(goal.id), session_id=str(learning_session.id), phase="claim_support"
+        )
 
         claim_rows = []
         seen_claim_ids = set()
@@ -344,11 +484,15 @@ class AutonomousLearner:
             source_ids = assessment.supported_source_ids
             claim = await self.repo.add_claim(draft, learning_session.id, source_ids)
             await self.repo.record_claim_evidence(claim, assessment.records)
+            await self._index_entity("claim", claim)
             if claim.id not in seen_claim_ids:
                 claim_rows.append(claim)
                 seen_claim_ids.add(claim.id)
 
         # Conflict detection happens before belief promotion. New model output cannot overwrite old beliefs.
+        self.llm.bind(
+            goal_id=str(goal.id), session_id=str(learning_session.id), phase="conflict_detection"
+        )
         disputes = 0
         disputed_claim_ids = set()
         for claim in claim_rows:
@@ -388,7 +532,7 @@ class AutonomousLearner:
         await self.repo.checkpoint(
             learning_session, "claims", claim_ids=[str(c.id) for c in claim_rows]
         )
-        await self.repo.update_goal_status(goal, GoalStatus.TESTING)
+        await self.repo.update_goal_status(goal, GoalStatus.TESTING, attempt=learning_session)
         self.llm.bind(
             goal_id=str(goal.id), session_id=str(learning_session.id), phase="closed_book_answer"
         )
@@ -398,28 +542,21 @@ class AutonomousLearner:
         evaluation = await self.evaluator.evaluate(goal.title, learned, docs)
         await self.repo.save_evaluation(goal.id, learning_session.id, evaluation)
 
-        await self.repo.update_goal_status(goal, GoalStatus.REFLECTING)
+        await self.repo.update_goal_status(goal, GoalStatus.REFLECTING, attempt=learning_session)
+        self.llm.bind(goal_id=str(goal.id), session_id=str(learning_session.id), phase="reflection")
         reflection = await self.reflector.reflect(goal.title, learned, evaluation)
 
         beliefs_promoted = 0
         if evaluation.passed:
             for claim in claim_rows:
                 source_by_id = {str(source.id): source for source in stored_sources.values()}
-                evidence_sources = [
-                    EvidenceSource(
-                        source_id=source_id,
-                        lineage_key=(source_by_id[source_id].metadata_json or {}).get(
-                            "lineage_key", ""
-                        ),
-                        normalized_url=source_by_id[source_id].normalized_url or "",
-                        publisher_key=source_by_id[source_id].publisher_key or "",
-                        content_hash=source_by_id[source_id].content_hash or "",
-                        evidence_level=source_by_id[source_id].evidence_level,
-                        credibility_score=source_by_id[source_id].credibility_score,
-                    )
-                    for source_id in claim.source_ids
-                    if source_id in source_by_id
-                ]
+                evidence_sources = await self.repo.lineage.evidence_sources(
+                    [
+                        source_by_id[source_id]
+                        for source_id in claim.source_ids
+                        if source_id in source_by_id
+                    ]
+                )
                 decision = self.promotion.decide(
                     evaluation_passed=True,
                     has_open_dispute=claim.id in disputed_claim_ids,
@@ -440,10 +577,15 @@ class AutonomousLearner:
                     independent_source_count=decision.independent_source_count,
                 )
                 try:
-                    vector = await self.embedding.embed(belief.statement)
-                    await self.repo.set_belief_embedding(
-                        belief, vector, fingerprint=self.embedding.fingerprint
-                    )
+                    if (
+                        belief.embedding is None
+                        or (belief.metadata_json or {}).get("embedding_fingerprint")
+                        != self.embedding.fingerprint
+                    ):
+                        vector = await self.embedding.embed(belief.statement)
+                        await self.repo.set_belief_embedding(
+                            belief, vector, fingerprint=self.embedding.fingerprint
+                        )
                 except Exception as exc:  # noqa: BLE001 - promotion must not depend on embeddings.
                     log.debug("Belief embedding was not persisted: %s", exc)
                 beliefs_promoted += 1
@@ -457,16 +599,21 @@ class AutonomousLearner:
                             strength=min(1.0, claim.confidence),
                             excerpt=await self.repo.supported_excerpt(claim.id, source.id),
                         )
-            await self.repo.update_goal_status(goal, GoalStatus.PASSED, evaluation.score)
+            await self.repo.update_goal_status(
+                goal, GoalStatus.PASSED, evaluation.score, attempt=learning_session
+            )
         else:
             await self.repo.update_goal_status(
                 goal,
                 GoalStatus.FAILED,
                 evaluation.score,
                 max_retry=self.cfg.learning.max_retry,
+                attempt=learning_session,
             )
 
-        await self.repo.record_skill_outcome([s.id for s in skills], evaluation.passed)
+        await self.repo.record_skill_outcome(
+            [s.id for s in skills], evaluation.passed, learning_session
+        )
         await self.repo.checkpoint(
             learning_session, "completed", evaluation=evaluation.model_dump()
         )
@@ -513,6 +660,8 @@ class AutonomousLearner:
         return {
             "status": "passed" if evaluation.passed else "failed",
             "goal": goal.title,
+            "session_id": str(learning_session.id),
+            "resumed": resuming,
             "score": evaluation.score,
             "sources": len(docs),
             "claims": len(claim_rows),
@@ -527,6 +676,6 @@ class AutonomousLearner:
         for _ in range(cycles):
             result = await self.run_cycle()
             log.info("Cycle result: %s", result)
-            if result["status"] in {"budget_exhausted", "busy", "idle"}:
+            if result["status"] in {"budget_exhausted", "busy", "idle", "resume_incompatible"}:
                 break
             await asyncio.sleep(self.cfg.learning.cycle_sleep_seconds)

@@ -129,7 +129,23 @@ class Workbench:
                 if not question or len(question) > 2000:
                     raise ValueError("问题需为1—2000个字符")
                 async with controller_lock(engine):
-                    memory = await repo.accepted_memory(100)
+                    from autodidact.embedding_runtime import RecordedEmbedding
+                    from autodidact.embeddings import build_embedding_provider
+                    from autodidact.retrieval import HybridRetriever
+
+                    hits = await HybridRetriever(
+                        repo, RecordedEmbedding(build_embedding_provider(), engine)
+                    ).retrieve(question, kinds=("belief",), limit=20, accepted_only=True)
+                    memory = [
+                        {
+                            "id": str(h.row.id),
+                            "topic": h.row.topic,
+                            "statement": h.row.statement,
+                            "status": h.row.status,
+                            "confidence": h.row.confidence,
+                        }
+                        for h in hits
+                    ]
                     result = await ObservedLLM(
                         build_llm(), engine, role="workbench_answer"
                     ).structured(
