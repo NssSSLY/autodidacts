@@ -178,6 +178,10 @@ class Evidence(Base):
     dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     strength: Mapped[float] = mapped_column(Float, default=0.5)
     excerpt: Mapped[str | None] = mapped_column(Text)
+    claim_evidence_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("claim_evidence.id"), nullable=True
+    )
+    assessment: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

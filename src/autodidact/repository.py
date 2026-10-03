@@ -14,7 +14,7 @@ from autodidact.config import agent_config
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
 from autodidact.knowledge.bibliography import identifier_links, publication_datetime
 from autodidact.knowledge.claim_support import ClaimEvidenceVerification
-from autodidact.knowledge.content_quality import classify_document
+from autodidact.knowledge.content_quality import classify_document, effective_source_assessment
 from autodidact.knowledge.decomposition import eligible_claim
 from autodidact.knowledge.lineage import SourceLineage
 from autodidact.knowledge.resolution_claim import conditional_claim
@@ -24,6 +24,7 @@ from autodidact.knowledge.sources import (
     normalize_url,
     publisher_key,
 )
+from autodidact.knowledge.support_assessment import SUPPORT_PROTOCOL
 from autodidact.learning_state import LearningState
 from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
 from autodidact.retrieval import RetrievalIndex
@@ -689,6 +690,138 @@ class Repository(LearningState):
             await self.s.rollback()
             if not _expected_unique_violation(exc, "uq_evidence_dedup_key_current"):
                 raise
+
+    # 功能：将同句同范围的已锚定核验关联到旧信念，逐引文保存立场快照，不修改旧结论或旧证据。
+    async def record_belief_evidence(self, belief, claim) -> list[models.Evidence]:
+        scope = ClaimScope.model_validate((belief.metadata_json or {}).get("claim_scope") or {})
+        if (
+            normalize_text_key(belief.statement) != normalize_text_key(claim.statement)
+            or ClaimScope.model_validate(claim.scope or {}) != scope
+        ):
+            raise ValueError("信念证据必须核验原结论及其原范围")
+        records = (
+            await self.s.scalars(
+                select(models.ClaimEvidence).where(models.ClaimEvidence.claim_id == claim.id)
+            )
+        ).all()
+        saved = []
+        for record in records:
+            stance = {
+                "supported": "support",
+                "contradicts": "attack",
+                "conditional": "context",
+            }.get(record.status)
+            audit = record.assessment or {}
+            if (
+                not stance
+                or audit.get("scope") != scope.model_dump(mode="json")
+                or audit.get("protocol") != SUPPORT_PROTOCOL
+                or audit.get("error")
+                or audit.get("missing_from_statement")
+            ):
+                continue
+            if (
+                record.status == "contradicts"
+                and scope.terms()
+                and audit.get("scope_coverage") != "complete"
+            ):
+                continue
+            if record.status == "supported" and str(record.source_id) not in (
+                claim.source_ids or []
+            ):
+                continue
+            source = await self.s.get(models.Source, record.source_id)
+            # 重新核对库内原文，避免关系/状态或摘录被错误关联。
+            if (
+                not source
+                or len(record.excerpt.strip()) < 12
+                or " ".join(record.excerpt.split()).casefold()
+                not in " ".join((source.extracted_text or "").split()).casefold()
+            ):
+                continue
+            quality = effective_source_assessment(source)
+            if quality.evidence_level <= 0:
+                continue
+            key = stable_key("belief_review", belief.id, record.id, stance)
+            existing = await self.s.scalar(
+                select(models.Evidence).where(models.Evidence.dedup_key == key)
+            )
+            if existing:
+                saved.append(existing)
+                continue
+            item = models.Evidence(
+                belief_id=belief.id,
+                source_id=source.id,
+                kind="belief_review",
+                stance=stance,
+                claim_evidence_id=record.id,
+                dedup_key=key,
+                evidence_level=quality.evidence_level,
+                strength=quality.credibility_score,
+                excerpt=record.excerpt,
+                assessment={
+                    "protocol": "belief_review_v1",
+                    "claim_id": str(claim.id),
+                    "learning_session_id": str(claim.learning_session_id),
+                    "relation": record.status,
+                    "reason": record.reason,
+                    "scope": claim.scope or {},
+                    "verification": audit,
+                    "quality": {"level": quality.evidence_level, "reason": quality.reason},
+                },
+            )
+            try:
+                async with self.s.begin_nested():
+                    self.s.add(item)
+                    await self.s.flush()
+            except IntegrityError as exc:
+                if not _expected_unique_violation(exc, "uq_evidence_dedup_key_current"):
+                    raise
+                item = await self.s.scalar(
+                    select(models.Evidence).where(models.Evidence.dedup_key == key)
+                )
+                if item is None:
+                    raise
+            await self.s.commit()
+            saved.append(item)
+        return saved
+
+    # 功能：有界展示信念原结论、证据立场快照、原文关联及最近复核；不发起外部核验。
+    async def belief_audit(self, belief_id: UUID, limit: int = 50) -> dict:
+        belief = await self.s.get(models.Belief, belief_id)
+        if belief is None:
+            raise ValueError("信念不存在")
+        evidence = (
+            await self.s.scalars(
+                select(models.Evidence)
+                .where(models.Evidence.belief_id == belief.id)
+                .order_by(models.Evidence.created_at.desc())
+                .limit(max(1, min(limit, 100)))
+            )
+        ).all()
+        return {
+            "belief_id": str(belief.id),
+            "statement": belief.statement,
+            "status": belief.status,
+            "confidence": belief.confidence,
+            "scope": (belief.metadata_json or {}).get("claim_scope", {}),
+            "latest_review": (belief.metadata_json or {}).get("latest_evidence_review", {}),
+            "latest_review_attempt": (belief.metadata_json or {}).get(
+                "latest_evidence_review_attempt", {}
+            ),
+            "evidence": [
+                {
+                    "id": str(e.id),
+                    "source_id": str(e.source_id) if e.source_id else None,
+                    "stance": e.stance,
+                    "excerpt": e.excerpt,
+                    "assessment": e.assessment or {},
+                    "claim_evidence_id": str(e.claim_evidence_id) if e.claim_evidence_id else None,
+                }
+                for e in evidence
+            ],
+            "note": "立场是原文核验观察，不是真值；历史证据审计为空表示未知，不代表已按新协议复核。",
+        }
 
     # 功能：提取信念结论、状态及评分字段，作为争议和历史中的变更前快照。
     @staticmethod

@@ -3,16 +3,14 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
 from autodidact import models
-from autodidact.config import agent_config
-from autodidact.goals.scorer import goal_score
+from autodidact.knowledge.belief_review import queue_stale_reviews
 from autodidact.learning.evaluation_contracts import SkillDrafts
 from autodidact.normalization import normalize_text_key
-from autodidact.schemas import CandidateGoal
 
 
 class MemoryConsolidator:
@@ -20,7 +18,7 @@ class MemoryConsolidator:
     def __init__(self, repo, llm):
         self.repo, self.llm = repo, llm
 
-    # 功能：按 UTC 日期幂等生成记忆报告，复核过旧信念并从多次成功反思提取待验证方法；不自动删旧认知。
+    # 功能：按UTC日期幂等生成报告、排过旧信念原文复核目标，提取候选方法；不冒充保持实验或删旧认知。
     async def consolidate(self):
         day = datetime.now(UTC).date().isoformat()
         existing = await self.repo.get_report("memory_daily", day)
@@ -56,30 +54,7 @@ class MemoryConsolidator:
             for e in evaluations
             if (e.components or {}).get("audit", {}).get("protocol") == "closed_book_v1"
         ]
-        cutoff = datetime.now(UTC) - timedelta(days=agent_config().learning.memory_review_days)
-        stale = list(
-            (
-                await self.repo.s.scalars(
-                    select(models.Belief)
-                    .where(
-                        models.Belief.status.in_(["supported", "verified"]),
-                        models.Belief.updated_at < cutoff,
-                    )
-                    .limit(3)
-                )
-            ).all()
-        )
-        for belief in stale[: await self.repo.goal_quota_remaining()]:
-            goal = CandidateGoal(
-                title=f"复核与保持测试：{belief.statement[:120]}",
-                source="retention",
-                description=f"复核信念 {belief.id} 的时效与掌握程度",
-                uncertainty=0.8,
-                importance=0.7,
-            )
-            await self.repo.add_goal(
-                goal, goal_score(goal, agent_config().learning.exploration_rate)
-            )
+        review_goals = await queue_stale_reviews(self.repo)
         successes = [s for s in sessions if s.success and (s.reflection or {}).get("lessons")]
         created = []
         if len(successes) >= 3:
@@ -178,6 +153,7 @@ class MemoryConsolidator:
             "mean_closed_book_score": sum(scores) / len(scores) if scores else None,
             "failure_patterns": dict(failures),
             "candidate_skill_ids": created,
+            "belief_review_goal_ids": review_goals,
             "graph": {"nodes": graph_nodes, "edges": graph_edges},
             "note": "掌握概况是证据与近期测试摘要；主题共现不作为知识关系或事实证明。",
         }

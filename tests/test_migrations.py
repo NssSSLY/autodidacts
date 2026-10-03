@@ -14,6 +14,7 @@ from autodidact.migrations import (
     retrieval_schema_columns,
     scope_schema_columns,
     source_provenance_schema_columns,
+    structure_schema_columns,
 )
 
 
@@ -37,6 +38,8 @@ def test_initial_migration_generates_offline_sql(capsys):
     assert "CREATE TABLE model_observations" in sql
 
     assert "CREATE TABLE claim_evidence" in sql
+    assert "ALTER TABLE evidence ADD COLUMN claim_evidence_id UUID" in sql
+    assert "ALTER TABLE evidence ADD COLUMN assessment JSONB DEFAULT '{}'::jsonb NOT NULL" in sql
     assert "ALTER TABLE claims ADD COLUMN structure JSONB DEFAULT '{}'::jsonb NOT NULL" in sql
     assert "ADD COLUMN statement_key" in sql
     assert "uq_claims_session_statement_key_current" in sql
@@ -144,3 +147,22 @@ def test_structure_downgrade_only_removes_added_column(capsys):
     command.downgrade(alembic_config(), "20261003_0007:20261003_0006", sql=True)
     sql = capsys.readouterr().out
     assert "ALTER TABLE claims DROP COLUMN structure" in sql and "DROP TABLE" not in sql
+
+
+# 功能：验证完整0007旧结构可升级到0008，部分证据扩展被拒绝。
+def test_structure_schema_is_stamped_at_0007_then_upgraded():
+    legacy = structure_schema_columns()
+    assert "assessment" not in legacy["evidence"]
+    assert decide_initialization_action(legacy) == "stamp_structure_then_upgrade"
+    legacy["evidence"].add("assessment")
+    with pytest.raises(RuntimeError, match="evidence"):
+        decide_initialization_action(legacy)
+
+
+# 功能：离线确认0008回退只丢新审计关联，不删除旧认知或立场。
+def test_review_downgrade_preserves_core_tables(capsys):
+    command.downgrade(alembic_config(), "20261003_0008:20261003_0007", sql=True)
+    sql = capsys.readouterr().out
+    assert "ALTER TABLE evidence DROP COLUMN assessment" in sql
+    assert "ALTER TABLE evidence DROP COLUMN claim_evidence_id" in sql
+    assert "DROP TABLE" not in sql

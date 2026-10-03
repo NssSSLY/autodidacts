@@ -1,6 +1,6 @@
 # 数据库迁移说明
 
-更新：2026-10-03。当前 HEAD：`20261003_0007`。本轮 F01-B/C/D 仅新增 claims.structure，已验证离线 SQL/结构识别；未执行实数据库迁移。
+更新：2026-10-03。当前 HEAD：`20261003_0008`。本轮 F02 仅新增 evidence.claim_evidence_id/assessment，已验证离线 SQL/结构识别；未执行实数据库迁移。
 
 ## 1. Revision 链与已有状态影响
 
@@ -13,6 +13,7 @@
 | 20261002_0005 | SourceLink、LearningStep、RetrievalEntry；来源边/工作项唯一约束、GIN/HNSW | 原有认知表不删除；旧会话无历史工作项，旧来源/索引需显式分批回填 |
 | 20261003_0006 | claims.scope、claim_evidence.assessment：非空 JSONB，默认 {} | 旧记录范围和审计保持未知；不改原文、状态、评分、唯一键，不伪造核验结果 |
 | 20261003_0007 | claims.structure：非空 JSONB，默认 {} | 保留父句、拆分/复核观察、父/子/调查子ID；旧主张未知，不批量拆分、重新晋升或撤回历史 |
+| 20261003_0008 | evidence.claim_evidence_id：可空外键；assessment：非空JSONB默认{} | 关联原文核验并保存信念立场快照；旧证据关联空/审计未知，无回填，保留旧支持/结论/评分 |
 
 初始 13 表 + 0003 一表 + 0004 两表 + 0005 三表 = 当前 19 个业务表，不含 alembic_version。Revision 日期标识不可因推送日期不同而修改。
 
@@ -26,13 +27,17 @@
 
 db.init_database → migrations.upgrade_database，数据库事务 advisory lock 串行化迁移。已有 Alembic version 时升级到 HEAD；新库创建全部 revision。
 
-早期 create_all 生成且没有版本表的**完整已知结构**可按表/列识别为 0001/0002/0003/0004/0005/0006/HEAD，stamp 对应版本后升级。未知、混合或部分结构拒绝自动迁移，以保护状态。
+早期 create_all 生成且没有版本表的**完整已知结构**可按表/列识别为 0001/0002/0003/0004/0005/0006/0007/HEAD，stamp 对应版本后升级。未知、混合或部分结构拒绝自动迁移，以保护状态。
 
 该兼容判断主要比较表/列名，不等于检查所有索引、约束、类型或数据一致性。不要手动 stamp HEAD 让不完整库“看起来成功”；管理员需先在副本核对修复。
 
 源码的 init-db 会装载运行配置 DATABASE_URL。裸 `alembic` 命令可能读取 alembic.ini 的演示连接，不应默认它自动读取 .env；日常使用项目入口，避免误操作别的数据库。
 
 ## 3. 升级前后检查与回填
+
+0008同样expand-only，停止旧写入并备份后init-db。仍19表；不回填历史Evidence立场、未知scope或既有Belief。沿用0003的证据dedup_key唯一索引，新复核键按belief/原文核验锚点/stance区分，不覆写旧support；唯一键竞争用savepoint仅恢复指定约束，不把外键错误当幂等成功。ClaimEvidence当前状态可重核，Evidence保存当时核验快照供追溯，不以锚点后来变化篡改历史。
+
+旧SQL省略新增字段可用默认值，但旧迁移入口不认识0008；停旧控制器再升级，不承诺混合版本并行。claim_scope_v2/belief_review_v1改变续跑签名，旧进行中尝试保留并人工restart-session。新增0007→0008旧信念/支持摘录保留及并发反对Evidence用例，仅显式*_test随机schema运行；本轮未配置而跳过，不代表在线迁移通过。
 
 0006/0007 均为 expand-only：停止写入并备份，部署新代码后执行 init-db。表数仍19，无删表、改唯一键或旧认知回填。0007 只增加 structure；来源书目复用既有 author/published_at/metadata_json，质量审计也存metadata。旧程序SQL省略新增列使用空默认值，但其迁移入口不认识0007，不承诺混跑/直接回退旧代码。新拆分/书目/正文质量协议加入续跑签名，旧进行中尝试需人工 restart-session，保留历史，不改旧签名冒充兼容。
 
@@ -55,6 +60,8 @@ db.init_database → migrations.upgrade_database，数据库事务 advisory lock
 本次未执行上述命令；空库/历史副本升级、状态完整性和恢复检查列为 V02 待验收。
 
 ## 4. 回退风险
+
+- 0008 downgrade仅删除Evidence.assessment/claim_evidence_id及其外键；证据立场/摘录、Claim/Belief、旧状态及ResearchReport复核报告保留，但原文核验关联与快照丢失。先导出新增字段、完整备份，不称无损回退；本轮只离线SQL检查，未执行实际降级。
 
 - 0007 downgrade 仅删除 claims.structure，不删除父/子主张和引文，但会丢失拆分观察、关系及结构门控。须先导出结构审计并完整备份；保留原句不等于无损回退，也不能在丢门控后继续当作已验证原子结论。书目/质量metadata在0007回退后仍保留，因为它们复用既有列。本轮只离线检查降级SQL，新增隔离库旧主张保留用例未运行。
 

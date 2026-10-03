@@ -1,4 +1,4 @@
-# 文件职责：注册主张/来源书目质量审计、三实体检索、来源血缘回填和持久会话检查/恢复CLI。
+# 文件职责：注册信念/主张/来源审计、信念复核队列、三实体检索、血缘回填和会话检查/恢复CLI。
 """来源血缘、持久检查点与混合检索的人工可见入口。"""
 
 from __future__ import annotations
@@ -15,14 +15,42 @@ from autodidact.commands import controlled
 from autodidact.db import engine
 from autodidact.embedding_runtime import RecordedEmbedding
 from autodidact.embeddings import build_embedding_provider
+from autodidact.knowledge.belief_review import queue_belief_review, queue_stale_reviews
 from autodidact.knowledge.sources import normalize_url
 from autodidact.resume import PROTOCOL
 from autodidact.retrieval import HybridRetriever
 from autodidact.schemas import SourceDocument
 
 
-# 功能：注册主张审计、检索、血缘和续跑维护命令，不在注册时连接外部服务。
+# 功能：注册认知审计/信念复核队列、检索、血缘和续跑命令，注册时不连接外部服务。
 def register_advanced_commands(app):
+    # 功能：只读展示旧信念支持/反对/条件原文及复核记录，不调用模型。
+    @app.command("show-belief")
+    def show_belief(belief_id: UUID, limit: int = typer.Option(50, min=1, max=100)):
+        # 功能：在受控会话读取信念证据快照，旧证据无审计时明确未知。
+        async def action(repo, llm):
+            return await repo.belief_audit(belief_id, limit)
+
+        print(asyncio.run(controlled(action)))
+
+    # 功能：按周期将指定或过旧信念排入有界原文复核目标，实际研究由run-once执行。
+    @app.command("queue-belief-reviews")
+    def queue_reviews(belief_id: UUID | None = None, limit: int = typer.Option(3, min=1, max=20)):
+        # 功能：复用原文复核队列入口，不写事实或发起付费模型研究。
+        async def action(repo, llm):
+            if belief_id is None:
+                return {"goal_ids": await queue_stale_reviews(repo, limit)}
+            belief = await repo.s.get(models.Belief, belief_id)
+            if belief is None:
+                raise ValueError("信念不存在")
+            goal = await queue_belief_review(repo, belief, "manual: 用户请求原文复核")
+            return {
+                "goal_id": str(goal.id) if goal else None,
+                "reason": "queued_or_existing" if goal else "quota_exhausted",
+            }
+
+        print(asyncio.run(controlled(action)))
+
     # 功能：显示来源作者/日期/研究标识的声明出处及内容质量审计，不触发联网或模型调用。
     @app.command("show-source")
     def show_source(source_id: UUID):

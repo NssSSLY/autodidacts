@@ -16,7 +16,8 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261003_0007"
+HEAD_REVISION = "20261003_0008"
+STRUCTURE_REVISION = "20261003_0007"
 SCOPE_REVISION = "20261003_0006"
 RETRIEVAL_REVISION = "20261002_0005"
 POST_RETRIEVAL_COLUMNS = {"claims": {"scope"}, "claim_evidence": {"assessment"}}
@@ -47,6 +48,7 @@ MigrationAction = Literal[
     "stamp_operations_then_upgrade",
     "stamp_retrieval_then_upgrade",
     "stamp_scope_then_upgrade",
+    "stamp_structure_then_upgrade",
     "stamp_head",
 ]
 
@@ -77,9 +79,16 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
-# 功能：从当前结构扣除0007结构审计列，得到0006完整旧表列集合。
-def scope_schema_columns() -> dict[str, set[str]]:
+# 功能：从当前结构扣除0008信念证据审计列，得到0007完整旧表列集合。
+def structure_schema_columns() -> dict[str, set[str]]:
     columns = expected_schema_columns()
+    columns["evidence"].difference_update({"claim_evidence_id", "assessment"})
+    return columns
+
+
+# 功能：从0007结构扣除结构审计列，得到0006完整旧表列集合。
+def scope_schema_columns() -> dict[str, set[str]]:
+    columns = structure_schema_columns()
     columns["claims"].discard("structure")
     return columns
 
@@ -142,6 +151,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == structure_schema_columns():
+        return "stamp_structure_then_upgrade"
     if actual == scope_schema_columns():
         return "stamp_scope_then_upgrade"
     if actual == retrieval_schema_columns():
@@ -208,6 +219,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, RETRIEVAL_REVISION)
     elif action == "stamp_scope_then_upgrade":
         command.stamp(config, SCOPE_REVISION)
+    elif action == "stamp_structure_then_upgrade":
+        command.stamp(config, STRUCTURE_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

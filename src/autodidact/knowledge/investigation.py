@@ -115,6 +115,7 @@ class DisputeInvestigator:
                 )
                 await self.repo.record_claim_evidence(claim, checked.records)
                 if index == 0 and claim is pairs[0][0]:
+                    await self.repo.record_belief_evidence(belief, claim)
                     for source_id in claim.source_ids:
                         source = next(s for s in sources.values() if str(s.id) == source_id)
                         quality = effective_source_assessment(source)

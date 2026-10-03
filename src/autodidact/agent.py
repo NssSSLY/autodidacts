@@ -19,6 +19,7 @@ from autodidact.embeddings import EmbeddingProvider, build_embedding_provider
 from autodidact.enums import GoalSource, GoalStatus
 from autodidact.goals.generator import GoalGenerator
 from autodidact.goals.scorer import goal_score
+from autodidact.knowledge.belief_review import REVIEW_PROTOCOL, BeliefReviewer, queue_stale_reviews
 from autodidact.knowledge.bibliography import BIBLIOGRAPHY_PROTOCOL
 from autodidact.knowledge.claim_support import ClaimSupportValidator
 from autodidact.knowledge.conflicts import ConflictDetector
@@ -134,6 +135,7 @@ class AutonomousLearner:
             "decomposition_protocol": DECOMPOSITION_PROTOCOL,
             "content_quality_protocol": CONTENT_QUALITY_PROTOCOL,
             "bibliography_protocol": BIBLIOGRAPHY_PROTOCOL,
+            "belief_review_protocol": REVIEW_PROTOCOL,
             "config": self.cfg.model_dump(mode="json"),
             "learner": [self.llm.provider_name, self.llm.model_name, settings.llm_base_url],
             "judge": [
@@ -214,8 +216,11 @@ class AutonomousLearner:
             )
             await self.repo.add_goal(seed, goal_score(seed, self.cfg.learning.exploration_rate))
 
-    # 功能：目标不足时依据使命与已有上下文提出候选目标，在每日配额内去重入库。
+    # 功能：目标池为空时先排过旧信念复核/争议调查，再依据使命提出目标；均遵守每日配额。
     async def ensure_goal_pool(self) -> None:
+        if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
+            return
+        await queue_stale_reviews(self.repo)
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
         context = await self.repo.epistemic_context()
@@ -246,6 +251,28 @@ class AutonomousLearner:
         candidates = await self.goal_generator.generate(self.cfg.agent.mission, context)
         for c in candidates[:quota]:
             await self.repo.add_goal(c, goal_score(c, self.cfg.learning.exploration_rate))
+
+    # 功能：执行原文复核旁路并记录目标终态；观察成功不代表保持测试通过或旧结论判真。
+    async def _review_goal(self, goal, attempt, resuming):
+        self.llm.bind(goal_id=str(goal.id), session_id=str(attempt.id), phase="belief_review")
+        result = await BeliefReviewer(self.repo, self.llm, self.collector).investigate(
+            goal.metadata_json["belief_review_id"], attempt
+        )
+        completed = result["outcome"] in {"observed", "skipped_retracted"}
+        await self.repo.update_goal_status(
+            goal,
+            GoalStatus.PASSED if completed else GoalStatus.FAILED,
+            max_retry=self.cfg.learning.max_retry,
+            attempt=attempt,
+        )
+        await self.repo.finish_learning_session(attempt, result, {}, completed)
+        return {
+            "status": "reviewed" if completed else "failed",
+            "goal": goal.title,
+            "session_id": str(attempt.id),
+            "resumed": resuming,
+            **result,
+        }
 
     # 功能：获取控制器互斥后运行一轮学习，区分预算、取消和一般异常并保留恢复状态。
     async def run_cycle(self) -> dict:
@@ -363,6 +390,8 @@ class AutonomousLearner:
         if not resuming:
             await self.repo.update_goal_status(goal, GoalStatus.PLANNED)
 
+        if (goal.metadata_json or {}).get("belief_review_id"):
+            return await self._review_goal(goal, learning_session, resuming)
         if (goal.metadata_json or {}).get("dispute_id"):
             attempt = learning_session
             self.current_attempt = attempt.id
@@ -538,9 +567,17 @@ class AutonomousLearner:
         )
         disputes = 0
         disputed_claim_ids = set()
+        reviewed_belief_ids = set()
+        reviewer = BeliefReviewer(self.repo, self.llm)
+        review_citations = [citation for draft in learned.claims for citation in draft.citations]
         for claim in claim_rows:
             old_beliefs = await self._beliefs_for_claim(claim.statement)
             for belief in old_beliefs:
+                if belief.id not in reviewed_belief_ids and len(reviewed_belief_ids) < 10:
+                    await reviewer.observe(
+                        belief, stored_sources, review_citations, learning_session, goal.id
+                    )
+                    reviewed_belief_ids.add(belief.id)
                 if normalize_text_key(belief.statement) == normalize_text_key(claim.statement):
                     continue
                 relation = await self.conflicts.compare(belief.statement, claim.statement)

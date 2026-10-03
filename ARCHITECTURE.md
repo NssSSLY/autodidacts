@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-03；原业务基线 d7f6583，后续含争议缓存修复及 F01 A–D 范围/书目/原子拆分/正文质量，schema HEAD 20261003_0007。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-03；原业务基线 d7f6583，后续含争议缓存修复及 F01 A–D、F02负面证据/历史信念复核，schema HEAD 20261003_0008。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -32,16 +32,16 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引覆盖仓库自己维护的 **97 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
+以下逐文件索引覆盖仓库自己维护的 **100 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
 
-每个 Python 文件首部有中文“文件职责”；全部 **489 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后 F01 有明确协议/schema/提示词增量，见第11–12节。数据模型自动生成的方法不在手工函数计数中。
+每个 Python 文件首部有中文“文件职责”；全部 **533 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后 F01/F02 有明确协议/schema/提示词增量，见第11–13节。数据模型自动生成的方法不在手工函数计数中。
 
 ### 3.1 入口、控制器、配置与持久状态
 
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/__init__.py](src/autodidact/__init__.py) | 声明 autodidact 包并保留版本标识，具体能力由各模块提供。 | 包边界 / 无显式方法 |
-| [src/autodidact/advanced_commands.py](src/autodidact/advanced_commands.py) | 注册主张/来源书目质量审计、三实体检索、来源血缘回填和会话检查/恢复 CLI。 | `register_advanced_commands` |
+| [src/autodidact/advanced_commands.py](src/autodidact/advanced_commands.py) | 注册信念/主张/来源审计与信念复核队列、三实体检索、血缘回填和会话检查/恢复CLI。 | `register_advanced_commands` |
 | [src/autodidact/agent.py](src/autodidact/agent.py) | 组织持久学习主循环：召回、研究、核证、争议、评估、晋升和续跑，模型不直接决定真相。 | `AutonomousLearner._beliefs_for_claim`、`AutonomousLearner._resume_signature`、`AutonomousLearner._planning_inputs`、`AutonomousLearner._index_entity`、其余见代码内注释 |
 | [src/autodidact/benchmark.py](src/autodidact/benchmark.py) | 保留早期文件式基准评分接口；当前 CLI 冻结实验走 experiments.py。 | `run_benchmark` |
 | [src/autodidact/cli.py](src/autodidact/cli.py) | 注册命令行主入口、日志、初始化、学习循环、状态和冻结基准入口。 | `configure_logging`、`init_db_cmd`、`bootstrap_cmd`、`bootstrap_cmd._run`、其余见代码内注释 |
@@ -87,6 +87,7 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/knowledge/__init__.py](src/autodidact/knowledge/__init__.py) | 声明主张、证据、信念与争议规则子包。 | 包边界 / 无显式方法 |
+| [src/autodidact/knowledge/belief_review.py](src/autodidact/knowledge/belief_review.py) | 复核原结论原范围，将反对/条件引文关联信念；周期/质量线索排队、独立研究/合格替代句开争议，不直接改旧结论。 | `queue_belief_review`、`queue_stale_reviews`、`BeliefReviewer.observe`、`BeliefReviewer.investigate` |
 | [src/autodidact/knowledge/bibliography.py](src/autodidact/knowledge/bibliography.py) | 有界读取本页meta/文章JSON-LD作者/出版日期/DOI、arXiv、PMID声明，保留出处/冲突，生成保守同作品边。 | `article_nodes`、`extract_bibliography`、`publication_datetime`、`identifier_links` |
 | [src/autodidact/knowledge/claim_support.py](src/autodidact/knowledge/claim_support.py) | 验证候选主张引用是否来自已读原文，区分锚定成功与语义支持。 | `ClaimSupportValidation.anchored_source_ids`、`ClaimSupportValidator.validate`、`ClaimSupportValidator._validate_citation` |
 | [src/autodidact/knowledge/content_quality.py](src/autodidact/knowledge/content_quality.py) | 按正文结构/引文/撤稿等锚点记录质量理由和上限，模型始终0，晋升/决议只降不升旧等级。 | `assess_content`、`classify_document`、`effective_source_assessment` |
@@ -139,6 +140,7 @@ CLI / 本地 Workbench
 | [migrations/versions/20261002_0005_lineage_resume_retrieval.py](migrations/versions/20261002_0005_lineage_resume_retrieval.py) | 增加来源依赖、学习工作项和三实体派生检索索引。 | `upgrade`、`downgrade` |
 | [migrations/versions/20261003_0006_claim_scope.py](migrations/versions/20261003_0006_claim_scope.py) | 只增加 claims.scope 和 claim_evidence.assessment；旧值未知，回退丢新增两列信息。 | `upgrade`、`downgrade` |
 | [migrations/versions/20261003_0007_claim_structure.py](migrations/versions/20261003_0007_claim_structure.py) | 只增加claims.structure，旧主张结构未知；回退丢拆分观察及父子关系，不删除原句/引文。 | `upgrade`、`downgrade` |
+| [migrations/versions/20261003_0008_belief_review.py](migrations/versions/20261003_0008_belief_review.py) | 只增加Evidence原文核验关联和立场快照；旧值空/未知，回退丢新增审计，不删除旧结论。 | `upgrade`、`downgrade` |
 | [scripts/autodidact.spec](scripts/autodidact.spec) | 定义 PyInstaller 资源、隐藏模块和文件夹发布结构，不打包真实密钥、学习数据库或 Chromium 用户资料。 | Analysis / EXE / COLLECT |
 | [scripts/autodidact_launcher.py](scripts/autodidact_launcher.py) | 作为 EXE 入口分离用户配置与程序资源；默认启动本地工作台。 | `main` |
 | [scripts/build_exe.ps1](scripts/build_exe.ps1) | 使用项目 .venv 安装打包/PDF依赖并生成 EXE 文件夹；会重写构建输出，数据库与用户密钥另行配置。 | 顺序执行的准备/构建步骤 |
@@ -149,6 +151,7 @@ CLI / 本地 Workbench
 
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
+| [tests/test_belief_review.py](tests/test_belief_review.py) | 替身回归立场/原文/队列幂等、同范围门控、独立资料复核与合格替代句争议、无资料/失败/降级不改旧状态。 | `test_observation_persists_stance_without_overwriting`、`test_fresh_review_opens_only_evidenced_dispute`及文件内注释 |
 | [tests/test_claim_evidence_persistence.py](tests/test_claim_evidence_persistence.py) | 检查主张证据的语义状态持久化与已知唯一约束竞争识别。 | `test_legacy_anchor_without_semantic_support_cannot_remain_claim_evidence`、`test_mixed_supported_and_contradictory_quotes_disqualify_same_source`、`test_only_known_unique_constraint_is_safe_to_recover`、`test_asyncpg_wrapped_unique_constraint_is_recovered` |
 | [tests/test_claim_support.py](tests/test_claim_support.py) | 检查引文是否能逐字定位到已读来源，拒绝伪造或未读 URL。 | `test_verbatim_citation_is_anchored_to_read_source`、`test_unread_or_nonverbatim_citation_cannot_supply_claim_source_id` |
 | [tests/test_claim_scope.py](tests/test_claim_scope.py) | 检查范围协议、完整覆盖/失败门控、隐藏范围、防重复提取绕过、持久审计与续跑身份；使用替身而非真实模型/数据库。 | `test_scope_requires_explicit_complete_coverage`、`test_scope_and_evidence_audit_persist_end_to_end`、`test_persisted_scope_cannot_be_bypassed_by_reassessment`及文件内注释 |
@@ -239,7 +242,7 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 
 所有 schema 变化走 Alembic；完整旧结构可识别 stamp 后升级，未知部分结构拒绝自动迁移。列名匹配不是数据/索引/约束完整性证明。新索引/血缘/续跑不删除旧核心认知，也不伪造历史；详见 [迁移说明](migrations/README.md)。
 
-此前文档/注释整理没有迁移，方法AST保持不变；之后争议修复和F01是业务增量，0006新增两列、0007新增结构审计列，未实际写学习库。当前121通过/3跳过；实库运行、私有真值、旧信念盲审、完整Mastery/世界模型、多模型管线及长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
+此前文档/注释整理没有迁移，方法AST保持不变；之后争议修复和F01/F02是业务增量，0006/0007/0008扩展范围/结构/证据审计，未实际写学习库。当前138通过/5跳过；实库运行、私有真值、旧信念盲审、完整Mastery/世界模型、多模型管线及长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
 
 ## 8. 适合第一次读代码的架构解释
 
@@ -266,9 +269,10 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 
 例如研究“GNSS 中断时 IMU 能否一直无漂移定位”：模型先给出候选说法，不立刻认定正确。引文不支持“无限期”就不能贡献支持；若与旧高置信信念冲突进入争议；来源/评估不足可保留候选或失败。流程成功运行和结论已验证是两个不同状态。
 
-### 8.2 三条旁路不要和学习混淆
+### 8.2 四条旁路不要和学习混淆
 
 - **争议目标**：_run_cycle 识别 dispute_id 后走 DisputeInvestigator.investigate → DisputeResolver → Repository.apply_dispute_resolution，调查双方并记录四种结果，不照搬普通学习晋升。
+- **信念复核目标**：_run_cycle识别belief_review_id后走BeliefReviewer.investigate，排除旧支持来源/血缘，核验原句，保存立场/报告；反对/条件且另有合格替代句才开争议，无替代留needs_follow_up，不冒充保持测试。
 - **工作台提问**：Workbench.dispatch 的 /api/ask 只召回无开放争议的接纳记忆，ObservedLLM 生成待核查解释并返回来源；不因此生成新已验证信念。
 - **实验命令**：experiments 冻结题集/记忆做评估和 A1/A2/B1/B2 比较，写 ResearchReport；不是自动切换模型或清洗知识库。
 
@@ -311,3 +315,15 @@ ClaimScope 记录 conditions/time_scope/units，范围正文匹配是保守文�
 0007仅新增claims.structure，默认{}、无旧数据回填；source书目/质量复用既有列。empty旧结构沿兼容支持规则处理，不凭空称原子化。新增三协议进入续跑签名，旧未结束尝试需人工重启。show-source/show-claim提供CLI审计，不是F05完整工作台。
 
 本轮相关回归70通过，完整121通过/3跳过；compileall、Ruff、命令帮助通过。三个隔离PostgreSQL用例（含新0006→0007保留旧主张）未配置而跳过，真实模型/来源标注、在线升级、付费研究及EXE仍未验证。第9–11节保留此前各阶段结果，不能用它们替代本轮验证。
+
+## 13. F02：负面证据与历史信念原文复核
+
+普通学习HybridRetriever召回旧信念→BeliefReviewer.observe保留原statement/scope→既有原文锚点/claim_scope_v2→ClaimEvidence→Repository.record_belief_evidence。仅库内原文、当前正等级和同句同范围可写信念证据；support/attack/context分别记录，mixed来源不供支持，旧Evidence不覆盖。claim_evidence_id关联当前核验，assessment保存当时模型/范围/理由/上下文/质量快照，不随重新判定改写历史立场。唯一键为belief/锚点/stance，已知唯一竞争在savepoint恢复，外键等错误照常报告。
+
+queue_belief_review按信念/周期/原文触发键复用目标，年龄只排调查；queue_stale_reviews有界100候选、默认3目标，排队受配额限制。支持来源质量下降亦可排队但不伪造正等级反对证据。memory_daily和空目标池调用同一入口；不是常驻计时器，也不是严格保持测试。
+
+_review_goal→BeliefReviewer.investigate排除旧支持来源URL/正文/出版方/已知血缘→新资料规划/阅读/综合→核验原句并持久立场。另有正等级原文支持的原子替代句且关系达到门槛才创建Dispute/历史和调查目标；仅关系模型意见不在复核旁路选边。缺替代为needs_follow_up，提供方失败/无资料为unknown，按已有max_retry重试后blocked。原结论和置信度不变；开争议只按既有事务标disputed，真正决议仍用四结果Resolver。
+
+ResearchReport按belief/attempt幂等保存终态，复用DurableSteps的成功外部结果；metadata区分最近合格观察与最近失败/待跟进尝试。show-belief有界读取证据和复核ID，queue-belief-reviews只排队，不发起付费研究。0008加两个证据字段，旧为空/{}无回填；claim_scope_v2/belief_review_v1加入签名，旧未结束尝试须人工restart。
+
+本轮重点58通过、完整138通过/5跳过；编译/Ruff/新增命令帮助通过。0007→0008保留旧信念/证据和并发反对Evidence两项在线用例新增但未配置隔离库而跳过。真实语义/来源独立性/阶段故障/长期效果待V14；大库复核公平性、来源日期认证/全网撤稿订阅、F03保持实验/F04模型盲审不冒充完成。历史第9–12节保持当时事实。
