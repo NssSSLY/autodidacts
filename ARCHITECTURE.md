@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-03；原业务基线 d7f6583，后续含争议缓存修复及 F01 A–D、F02负面证据/历史信念复核，schema HEAD 20261003_0008。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-03；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核和F05只读认知审计，schema HEAD仍为20261003_0008。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -32,9 +32,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引覆盖仓库自己维护的 **100 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
+以下逐文件索引覆盖仓库自己维护的 **104 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
 
-每个 Python 文件首部有中文“文件职责”；全部 **533 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后 F01/F02 有明确协议/schema/提示词增量，见第11–13节。数据模型自动生成的方法不在手工函数计数中。
+每个 Python 文件首部有中文“文件职责”；全部 **572 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后F01/F02/F05是明确功能增量，见第11–14节。数据模型自动生成的方法不在手工函数计数中。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -43,6 +43,7 @@ CLI / 本地 Workbench
 | [src/autodidact/__init__.py](src/autodidact/__init__.py) | 声明 autodidact 包并保留版本标识，具体能力由各模块提供。 | 包边界 / 无显式方法 |
 | [src/autodidact/advanced_commands.py](src/autodidact/advanced_commands.py) | 注册信念/主张/来源审计与信念复核队列、三实体检索、血缘回填和会话检查/恢复CLI。 | `register_advanced_commands` |
 | [src/autodidact/agent.py](src/autodidact/agent.py) | 组织持久学习主循环：召回、研究、核证、争议、评估、晋升和续跑，模型不直接决定真相。 | `AutonomousLearner._beliefs_for_claim`、`AutonomousLearner._resume_signature`、`AutonomousLearner._planning_inputs`、`AutonomousLearner._index_entity`、其余见代码内注释 |
+| [src/autodidact/audit.py](src/autodidact/audit.py) | 有界只读认知列表/详情、库内引用、原文/血缘/历史/四结果及UTC预算；复用Repository，不调用模型或写状态。 | `AuditQuery`、`bounded_display`、`CognitiveAudit.listing`、`CognitiveAudit.detail`、`CognitiveAudit.budget` |
 | [src/autodidact/benchmark.py](src/autodidact/benchmark.py) | 保留早期文件式基准评分接口；当前 CLI 冻结实验走 experiments.py。 | `run_benchmark` |
 | [src/autodidact/cli.py](src/autodidact/cli.py) | 注册命令行主入口、日志、初始化、学习循环、状态和冻结基准入口。 | `configure_logging`、`init_db_cmd`、`bootstrap_cmd`、`bootstrap_cmd._run`、其余见代码内注释 |
 | [src/autodidact/commands.py](src/autodidact/commands.py) | 注册目标、记忆、技能、模型比较、索引、导入、网页模型与工作台 CLI。 | `register_commands` |
@@ -67,7 +68,7 @@ CLI / 本地 Workbench
 | [src/autodidact/runtime.py](src/autodidact/runtime.py) | 提供控制器互斥和 UTC 每日预算预留/结算，避免无界外部调用。 | `controller_lock`、`OperationBudget.reserve`、`OperationBudget.finish`、`BudgetedSearch.search` |
 | [src/autodidact/scheduling.py](src/autodidact/scheduling.py) | 在实际学习运行时检查可选 Day 0/7/14/21/30 冻结基准里程碑。 | `scheduled_benchmarks` |
 | [src/autodidact/schemas.py](src/autodidact/schemas.py) | 定义结构化协议与约束，ClaimScope 表示待核验条件/时间/单位，不代表真值。 | `ClaimScope.terms`、`ClaimScope.missing_from`及数据结构 |
-| [src/autodidact/workbench.py](src/autodidact/workbench.py) | 提供仅回环地址可访问的研究工作台，操作目标/学习并基于接纳记忆解释问题。 | `Workbench.learn`、`Workbench.dispatch`、`Workbench.connection`、`serve` |
+| [src/autodidact/workbench.py](src/autodidact/workbench.py) | 提供回环研究工作台、目标/学习/记忆解释及GET只读认知审计；负责访问保护、独立只读事务与纯文本页面。 | `Workbench.learn`、`Workbench.dispatch`、`Workbench.connection`、`serve` |
 
 ### 3.2 模型与目标
 
@@ -151,6 +152,9 @@ CLI / 本地 Workbench
 
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
+| [tests/test_audit_postgres.py](tests/test_audit_postgres.py) | 显式*_test随机schema验证Source/撤回信念的真实审计查询及READ ONLY强制拒写；缺配置跳过。 | `test_audit_database_enforces_read_only` |
+| [tests/test_workbench_audit.py](tests/test_workbench_audit.py) | 无写会话/SQL形状及真实回环HTTP替身验证六类列表、原文/历史/四结果、参数/预算/访问安全。 | `ReadSession`、`test_dispatch_read_only_transaction`、`test_http_protection_and_safe_errors`及文件内注释 |
+| [tests/test_workbench_browser.py](tests/test_workbench_browser.py) | 已有Edge/显式路径临时无账户浏览器，全部请求替身响应，验证关联/返回/分页及恶意HTML不执行。 | `browser_path`、`test_read_only_audit_ui_with_hostile_text` |
 | [tests/test_belief_review.py](tests/test_belief_review.py) | 替身回归立场/原文/队列幂等、同范围门控、独立资料复核与合格替代句争议、无资料/失败/降级不改旧状态。 | `test_observation_persists_stance_without_overwriting`、`test_fresh_review_opens_only_evidenced_dispute`及文件内注释 |
 | [tests/test_claim_evidence_persistence.py](tests/test_claim_evidence_persistence.py) | 检查主张证据的语义状态持久化与已知唯一约束竞争识别。 | `test_legacy_anchor_without_semantic_support_cannot_remain_claim_evidence`、`test_mixed_supported_and_contradictory_quotes_disqualify_same_source`、`test_only_known_unique_constraint_is_safe_to_recover`、`test_asyncpg_wrapped_unique_constraint_is_recovered` |
 | [tests/test_claim_support.py](tests/test_claim_support.py) | 检查引文是否能逐字定位到已读来源，拒绝伪造或未读 URL。 | `test_verbatim_citation_is_anchored_to_read_source`、`test_unread_or_nonverbatim_citation_cannot_supply_claim_source_id` |
@@ -242,7 +246,7 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 
 所有 schema 变化走 Alembic；完整旧结构可识别 stamp 后升级，未知部分结构拒绝自动迁移。列名匹配不是数据/索引/约束完整性证明。新索引/血缘/续跑不删除旧核心认知，也不伪造历史；详见 [迁移说明](migrations/README.md)。
 
-此前文档/注释整理没有迁移，方法AST保持不变；之后争议修复和F01/F02是业务增量，0006/0007/0008扩展范围/结构/证据审计，未实际写学习库。当前138通过/5跳过；实库运行、私有真值、旧信念盲审、完整Mastery/世界模型、多模型管线及长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
+此前文档/注释整理没有迁移，方法AST保持不变；之后争议修复和F01/F02是业务增量，0006/0007/0008扩展范围/结构/证据审计；F05无新迁移。当前173通过/6数据库跳过，临时Edge纯文本交互回归通过；未实际写学习库。实库运行、私有真值、旧信念盲审、完整Mastery/世界模型、多模型管线及长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
 
 ## 8. 适合第一次读代码的架构解释
 
@@ -327,3 +331,17 @@ _review_goal→BeliefReviewer.investigate排除旧支持来源URL/正文/出版�
 ResearchReport按belief/attempt幂等保存终态，复用DurableSteps的成功外部结果；metadata区分最近合格观察与最近失败/待跟进尝试。show-belief有界读取证据和复核ID，queue-belief-reviews只排队，不发起付费研究。0008加两个证据字段，旧为空/{}无回填；claim_scope_v2/belief_review_v1加入签名，旧未结束尝试须人工restart。
 
 本轮重点58通过、完整138通过/5跳过；编译/Ruff/新增命令帮助通过。0007→0008保留旧信念/证据和并发反对Evidence两项在线用例新增但未配置隔离库而跳过。真实语义/来源独立性/阶段故障/长期效果待V14；大库复核公平性、来源日期认证/全网撤稿订阅、F03保持实验/F04模型盲审不冒充完成。历史第9–12节保持当时事实。
+
+## 14. F05：工作台只读认知审计
+
+入口为PAGE内置审计区 → GET `/api/audit/{kind}` 列表或 `/{UUID}` 详情 → `CognitiveAudit` → 既有Repository/ORM。六类kind为sources/claims/beliefs/disputes/reports/operations；不复用接纳记忆筛选，因此撤回/争议/已决议记录仍可读。关键词用绑定/转义SQL字面检索，无向量或模型调用；精确state映射来源quality_class、报告kind、主张topic，其余status。
+
+`AuditQuery`禁止未知/重复参数，默认20、最大50条，offset上限10000；稳定时间+ID排序、多取一条，不执行全库count。Source使用fetched_at而非不存在的created_at。Claim/Belief仓库审计增加offset/next_offset/truncated，默认调用仍是第一页；仓库limit明确校验1–100，不再对非法信念limit静默夹取。库内显式UUID关联用于站内按钮，外部URL不成为可执行动作。
+
+详情复用scope/structure、书目/质量审计与有效质量上限；原文12000字符/段、text_offset上限2000000；血缘仅相邻边有界分页和已入库来源逐层追溯，cites非同源依赖，不计算/抓取整个网络。信念显示三立场、等级/强度、当前评分和旧新History；复核报告限定belief_review+belief_id。争议读取旧快照/调查理由/四结果metadata及显式关联，不调用Resolver。
+
+审计独立会话第一条SQL为`SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`，第二条设statement_timeout 5秒；整体asyncio.timeout 10秒，退出不commit。每页读同一快照，跨请求/页不冻结，学习新增时可位移。预算按UTC今日sum(coalesce(actual,reserved))，真实0不当未知；金额估算、配置0上限未限制，不创建OperationBudget预留。
+
+`bounded_display`限制文字/深度/节点/集合，导航信息不受不可信正文耗尽预算影响，截断显式标记且原值保留。页面所有内容使用textContent而非innerHTML；关联浏览路径最多20条、请求序号避免旧响应覆盖新选择。Host/Token/Origin/CSP/禁止缓存、nosniff和no-referrer维持回环保护；不存在详情404，错误不返回连接凭据。既有学习/目标/提问仍是写操作，启动serve仍检查迁移，不宣称整个应用为只读服务。
+
+无schema、依赖或打包资源变化，HEAD仍0008，旧状态不回填；人工批准/编辑、完整图布局/全量导出、持久浏览日志、公网多用户不在本次范围。测试见新三个文件；数据库只读拒写用例需显式*_test库，当前跳过，不能用SQL替身或浏览器回归冒充实库验收。

@@ -459,10 +459,10 @@ class Repository(LearningState):
             claim.source_ids = qualified
             await self.s.commit()
 
-    # 功能：有界读取主张范围、引文状态及核验审计；不重新判真、不调用外部模型。
-    async def claim_audit(self, claim_id: UUID, limit: int = 20) -> dict:
-        if not 1 <= limit <= 100:
-            raise ValueError("limit must be between 1 and 100")
+    # 功能：分页只读主张范围、引文状态及核验审计；兼容默认第一页，不重新判真。
+    async def claim_audit(self, claim_id: UUID, limit: int = 20, offset: int = 0) -> dict:
+        if not 1 <= limit <= 100 or not 0 <= offset <= 10000:
+            raise ValueError("limit需1—100，offset需0—10000")
         claim = await self.s.get(models.Claim, claim_id)
         if claim is None:
             raise ValueError("主张不存在")
@@ -470,6 +470,7 @@ class Repository(LearningState):
             select(models.ClaimEvidence)
             .where(models.ClaimEvidence.claim_id == claim_id)
             .order_by(models.ClaimEvidence.created_at, models.ClaimEvidence.id)
+            .offset(offset)
             .limit(limit + 1)
         )
         rows = list(result.scalars())
@@ -478,6 +479,7 @@ class Repository(LearningState):
             source = await self.s.get(models.Source, row.source_id)
             evidence.append(
                 {
+                    "id": str(row.id),
                     "source_id": str(row.source_id),
                     "source_url": source.url if source else None,
                     "excerpt": row.excerpt,
@@ -499,6 +501,10 @@ class Repository(LearningState):
             "structure": getattr(claim, "structure", None) or {},
             "evidence": evidence,
             "truncated": len(rows) > limit,
+            "offset": offset,
+            "next_offset": offset + limit
+            if len(rows) > limit and offset + limit <= 10000
+            else None,
             "note": "范围与判定是可审计提议；空范围表示未知，不表示普遍适用，模型观察不是真值",
         }
 
@@ -786,8 +792,10 @@ class Repository(LearningState):
             saved.append(item)
         return saved
 
-    # 功能：有界展示信念原结论、证据立场快照、原文关联及最近复核；不发起外部核验。
-    async def belief_audit(self, belief_id: UUID, limit: int = 50) -> dict:
+    # 功能：分页展示信念原结论、证据立场快照、原文关联及复核；兼容默认第一页，不发起核验。
+    async def belief_audit(self, belief_id: UUID, limit: int = 50, offset: int = 0) -> dict:
+        if not 1 <= limit <= 100 or not 0 <= offset <= 10000:
+            raise ValueError("limit需1—100，offset需0—10000")
         belief = await self.s.get(models.Belief, belief_id)
         if belief is None:
             raise ValueError("信念不存在")
@@ -795,8 +803,9 @@ class Repository(LearningState):
             await self.s.scalars(
                 select(models.Evidence)
                 .where(models.Evidence.belief_id == belief.id)
-                .order_by(models.Evidence.created_at.desc())
-                .limit(max(1, min(limit, 100)))
+                .order_by(models.Evidence.created_at.desc(), models.Evidence.id.desc())
+                .offset(offset)
+                .limit(limit + 1)
             )
         ).all()
         return {
@@ -814,12 +823,20 @@ class Repository(LearningState):
                     "id": str(e.id),
                     "source_id": str(e.source_id) if e.source_id else None,
                     "stance": e.stance,
+                    "kind": e.kind,
+                    "evidence_level": e.evidence_level,
+                    "strength": e.strength,
                     "excerpt": e.excerpt,
                     "assessment": e.assessment or {},
                     "claim_evidence_id": str(e.claim_evidence_id) if e.claim_evidence_id else None,
                 }
-                for e in evidence
+                for e in evidence[:limit]
             ],
+            "offset": offset,
+            "truncated": len(evidence) > limit,
+            "next_offset": offset + limit
+            if len(evidence) > limit and offset + limit <= 10000
+            else None,
             "note": "立场是原文核验观察，不是真值；历史证据审计为空表示未知，不代表已按新协议复核。",
         }
 
