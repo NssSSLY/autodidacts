@@ -10,6 +10,7 @@ from sqlalchemy import select
 from autodidact import models
 from autodidact.knowledge.belief_review import queue_stale_reviews
 from autodidact.learning.evaluation_contracts import SkillDrafts
+from autodidact.learning.ground_truth import evaluation_groups
 from autodidact.normalization import normalize_text_key
 
 
@@ -49,11 +50,13 @@ class MemoryConsolidator:
                 select(models.Evaluation).order_by(models.Evaluation.created_at.desc()).limit(100)
             )
         ).all()
-        scores = [
-            e.score
-            for e in evaluations
-            if (e.components or {}).get("audit", {}).get("protocol") == "closed_book_v1"
-        ]
+        score_groups = evaluation_groups(
+            [
+                e
+                for e in evaluations
+                if (e.components or {}).get("audit", {}).get("protocol") == "closed_book_v1"
+            ]
+        )
         review_goals = await queue_stale_reviews(self.repo)
         successes = [s for s in sessions if s.success and (s.reflection or {}).get("lessons")]
         created = []
@@ -150,7 +153,10 @@ class MemoryConsolidator:
             "day": day,
             "memory": memory,
             "mastery": mastery,
-            "mean_closed_book_score": sum(scores) / len(scores) if scores else None,
+            "mean_closed_book_score": next(iter(score_groups.values()))["mean_score"]
+            if len(score_groups) == 1
+            else None,
+            "closed_book_score_groups": score_groups,
             "failure_patterns": dict(failures),
             "candidate_skill_ids": created,
             "belief_review_goal_ids": review_goals,

@@ -1,0 +1,12 @@
+{
+  "protocol": "reliable_benchmark_v1",
+  "suite_id": "arithmetic_demo",
+  "suite_version": 1,
+  "min_retention_hours": 24,
+  "items": [
+    {"id": "train-add", "family_id": "train-add-001", "split": "train", "category": "arithmetic_demo", "question": "训练示例：2加3是多少？只回答数值。", "truth": {"kind": "computed", "operation": "add", "operands": ["2", "3"]}},
+    {"id": "test-add", "family_id": "heldout-add-001", "split": "test", "category": "arithmetic_demo", "question": "7加8是多少？只回答数值。", "truth": {"kind": "computed", "operation": "add", "operands": ["7", "8"]}},
+    {"id": "transfer-distance", "family_id": "heldout-distance-001", "split": "transfer", "category": "arithmetic_demo", "question": "速度为3米/秒，匀速运动4秒，路程多少米？只回答数值、空格和单位m。", "truth": {"kind": "computed", "operation": "multiply", "operands": ["3", "4"], "unit": "m"}},
+    {"id": "retention-subtract", "family_id": "heldout-subtract-001", "split": "retention", "category": "arithmetic_demo", "question": "20减6是多少？只回答数值。", "truth": {"kind": "computed", "operation": "subtract", "operands": ["20", "6"]}}
+  ]
+}

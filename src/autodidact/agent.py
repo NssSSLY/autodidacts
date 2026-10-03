@@ -37,6 +37,7 @@ from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import normalize_url
 from autodidact.knowledge.support_assessment import SUPPORT_PROTOCOL, ClaimSupportAssessor
 from autodidact.learning.evaluator import Evaluator
+from autodidact.learning.ground_truth import CLOSED_BOOK_SCORING, CLOSED_BOOK_WEIGHTS, digest
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
 from autodidact.learning.synthesizer import Synthesizer
@@ -136,6 +137,8 @@ class AutonomousLearner:
             "content_quality_protocol": CONTENT_QUALITY_PROTOCOL,
             "bibliography_protocol": BIBLIOGRAPHY_PROTOCOL,
             "belief_review_protocol": REVIEW_PROTOCOL,
+            "evaluation_scoring_protocol": CLOSED_BOOK_SCORING,
+            "evaluation_formula_sha256": digest(CLOSED_BOOK_WEIGHTS),
             "config": self.cfg.model_dump(mode="json"),
             "learner": [self.llm.provider_name, self.llm.model_name, settings.llm_base_url],
             "judge": [

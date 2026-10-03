@@ -21,7 +21,7 @@
 
 修改代码之前：
 
-- 阅读 `README.md`、`ARCHITECTURE.md` 和 `CODEX_BUILD_PROMPT.md`。
+- 阅读根目录 `README.md`、`doc/ARCHITECTURE.md` 和 `doc/CODEX_BUILD_PROMPT.md`；开发约束沿用本文件 `doc/AGENTS.md`。
 - 运行 `pytest -q`。
 
 修改代码之后：
@@ -53,4 +53,4 @@
 - schema 变化同步更新 `migrations/README.md`，说明旧状态影响、回填及降级数据损失。
 - 不用历史测试结果证明新功能；未运行的检查明确标为待验收。
 
-- 新增或改变方法时维护中文功能说明；新增文件时更新 `ARCHITECTURE.md` 的逐文件职责索引。注释必须描述实际行为，不把计划能力写成已实现。
+- 新增或改变方法时维护中文功能说明；新增文件时更新 `doc/ARCHITECTURE.md` 的逐文件职责索引。注释必须描述实际行为，不把计划能力写成已实现。

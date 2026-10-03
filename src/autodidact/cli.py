@@ -15,7 +15,8 @@ from autodidact.brain.llm import build_llm
 from autodidact.commands import controlled, register_commands
 from autodidact.config import agent_config, runtime_settings
 from autodidact.db import SessionLocal, engine, init_database
-from autodidact.experiments import evaluate_suite, freeze_suite
+from autodidact.experiments import freeze_suite
+from autodidact.learning.reliable_evaluation import run_benchmark
 from autodidact.metrics import dashboard
 from autodidact.runtime import controller_lock
 
@@ -103,11 +104,7 @@ def benchmark_cmd(path: str = "data/benchmark/sample.json") -> None:
     # 功能：冻结题集、隔离评估、保存 benchmark_run 和空记忆快照，返回报告及分数。
     async def action(repo, llm):
         suite = await freeze_suite(repo, path)
-        result = await evaluate_suite(llm, build_judge(engine), suite.payload["items"], [])
-        report = await repo.save_report(
-            "benchmark_run", {**result, "benchmark_id": str(suite.id), "memory_snapshot": []}
-        )
-        return {"report_id": str(report.id), **result}
+        return await run_benchmark(repo, llm, build_judge(engine), suite.id)
 
     print(asyncio.run(controlled(action)))
 

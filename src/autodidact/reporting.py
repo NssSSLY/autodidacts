@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from autodidact import models
+from autodidact.learning.ground_truth import evaluation_key
 
 
 # 功能：读取时间窗内评估/操作/报告，生成成长与费用摘要；日常评分不等于冻结基准增益。
@@ -42,6 +43,8 @@ async def longitudinal_report(repo, days=30):
                             "benchmark_run",
                             "skill_validation",
                             "scheduled_benchmark",
+                            "benchmark_retention",
+                            "benchmark_regrade",
                         ]
                     ),
                 )
@@ -54,18 +57,33 @@ async def longitudinal_report(repo, days=30):
         if (evaluation.components or {}).get("audit", {}).get("protocol") != "closed_book_v1":
             continue
         day = evaluation.created_at.astimezone(UTC).date().isoformat()
+        audit = evaluation.components["audit"]
+        key = evaluation_key(audit)
         point = timeline.setdefault(
-            day, {"scores": [], "calibration": [], "transfer": [], "passed": 0}
+            (day, key),
+            {
+                "scores": [],
+                "calibration": [],
+                "transfer": [],
+                "passed": 0,
+                "protocol": audit.get("protocol"),
+                "scoring_protocol": audit.get("scoring_protocol", "legacy_unversioned"),
+                "model": audit.get("learner_model", "unknown"),
+            },
         )
         point["scores"].append(evaluation.score)
         point["calibration"].append(evaluation.components.get("calibration", 0))
         point["transfer"].append(evaluation.components.get("transfer", 0))
         point["passed"] += int(evaluation.passed)
     daily = []
-    for day, point in timeline.items():
+    for (day, key), point in timeline.items():
         daily.append(
             {
                 "day": day,
+                "evaluation_key": key,
+                "protocol": point["protocol"],
+                "scoring_protocol": point["scoring_protocol"],
+                "model": point["model"],
                 "evaluations": len(point["scores"]),
                 "mean_score": sum(point["scores"]) / len(point["scores"]),
                 "mean_calibration": sum(point["calibration"]) / len(point["calibration"]),
@@ -95,6 +113,11 @@ async def longitudinal_report(repo, days=30):
         "experiment_reports": [
             {"id": str(r.id), "kind": r.kind, "created_at": r.created_at.isoformat()}
             for r in reports
+        ],
+        "retention_reports": [
+            {**r.payload, "report_id": str(r.id)}
+            for r in reports
+            if r.kind == "benchmark_retention"
         ],
         "note": "日常学习评分不是冻结基准增益；跨天成长需对照相同模型、题集和预算。",
     }

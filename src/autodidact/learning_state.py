@@ -11,6 +11,7 @@ from sqlalchemy import exists, func, select, text
 from autodidact import models
 from autodidact.config import agent_config
 from autodidact.enums import GoalStatus
+from autodidact.learning.ground_truth import digest, evaluation_key
 
 
 class LearningState:
@@ -167,7 +168,7 @@ class LearningState:
             )
             g = groups.setdefault(key, {"calls": 0, "errors": {}, "domains": {}})
             goal = await self.s.get(models.Goal, evaluation.goal_id)
-            domain = (goal.title if goal else "unknown")[:200]
+            domain = (goal.title if goal else "unknown")[:200] + ":" + evaluation_key(audit)
             g["domains"].setdefault(domain, []).append(evaluation.score)
         reports = (
             await self.s.scalars(
@@ -191,9 +192,22 @@ class LearningState:
             for run in runs:
                 key = (run.get("provider", "unknown"), run.get("model", "unknown"))
                 g = groups.setdefault(key, {"calls": 0, "errors": {}, "domains": {}})
-                g["benchmark_score"] = run["score"]
+                if run.get("score") is None or not run.get("complete", True):
+                    continue
+                comparison = run.get("comparison_key") or digest(
+                    [
+                        run.get("protocol", "legacy_unversioned"),
+                        payload.get("benchmark_id", str(report.id)),
+                    ]
+                )
+                comparison = digest(
+                    [comparison, run.get("model_identity", {"provider": key[0], "model": key[1]})]
+                )
+                g.setdefault("benchmark_groups", {}).setdefault(comparison, []).append(run["score"])
                 for detail in run.get("details", []):
-                    domain = f"frozen_base:{detail.get('category', 'general')}"
+                    if detail.get("score") is None:
+                        continue
+                    domain = f"frozen_base:{comparison}:{detail.get('category', 'general')}"
                     g["domains"].setdefault(domain, []).append(detail["score"])
         for (provider, name), group in groups.items():
             profile = await self.s.scalar(
@@ -208,8 +222,10 @@ class LearningState:
                 profile = models.ModelProfile(provider=provider, model_name=name)
                 self.s.add(profile)
             profile.sample_count = sum(len(v) for v in group["domains"].values())
-            if "benchmark_score" in group:
-                profile.benchmark_score = group["benchmark_score"]
+            benchmark_groups = group.get("benchmark_groups", {})
+            profile.benchmark_score = (
+                next(iter(benchmark_groups.values()))[-1] if len(benchmark_groups) == 1 else None
+            )
             profile.domain_scores = {
                 k: {"mean": sum(v) / len(v), "samples": len(v)} for k, v in group["domains"].items()
             }
@@ -217,6 +233,10 @@ class LearningState:
                 "calls": group["calls"],
                 "failures": group["errors"],
                 "score_source": "闭卷核源与冻结基准（含模型裁判），未替代人工真值",
+                "benchmark_score_groups": {
+                    key: {"mean": sum(values) / len(values), "n": len(values)}
+                    for key, values in benchmark_groups.items()
+                },
             }
         await self.s.commit()
         return len(groups)

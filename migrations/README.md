@@ -74,3 +74,15 @@ db.init_database → migrations.upgrade_database，数据库事务 advisory lock
 - 0001 downgrade 删除核心认知表，是破坏性操作。
 
 不提供可直接在唯一学习库运行的批量降级命令。回退前导出新增记录并备份完整数据库，优先恢复到新空库，验证后切换连接。不要删 volume、reset schema 或覆盖唯一备份来解决迁移问题。
+
+## 5. F03评估协议兼容迁移（无新revision）
+
+2026-10-03 F03仍使用20261003_0008，不改19表/列/索引。新可靠manifest、版本占位、运行/保持/重评分写入既有research_reports.payload JSONB；版本占位复用uq_reports_kind_key与save_report锁/幂等，不清空旧题集。写占位后失败允许同内容重试；同suite_id+suite_version不同摘要拒绝，应增加版本而不是改原数据。
+
+新读者识别reliable_benchmark_v1/ exact_numeric_v1及旧legacy协议；未知协议拒绝，完整manifest hash校验包含真值/审核/评分。旧JSON数组摘要算法不变，旧报告不猜测回填、不覆盖历史分数/认知。Profile及整合的分组只是派生统计，不能把旧模型裁判记录变为独立真值。
+
+升级：停所有旧写者→完整备份→新代码/init-db→核对HEAD0008→重启。新旧程序不可混跑：旧代码不认识新payload且可能错误评分，新可靠冻结ID不得交旧程序消费。动态闭卷评分身份进入续跑签名，旧未完成尝试保留并人工restart，不能伪造兼容缓存。
+
+回退代码没有新的schema可downgrade；保留全部新旧JSONB，禁止让旧评估器运行新冻结ID。若必须恢复旧运行状态，使用经验证的升级前完整备份恢复到新空库并切连接，期间新增报告需另存审计，不覆盖唯一库。既有0004 downgrade会删全部报告，仍是数据损失，不是F03安全回退方法。
+
+本轮离线新旧协议/摘要/版本冲突/重评分回归通过；新增*_test随机schema JSONB/旧信念保留用例因未配置测试库跳过，未执行真实迁移、并发写入或生产库回填。实际验收见V02/V03/V16。

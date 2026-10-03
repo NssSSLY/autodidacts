@@ -18,11 +18,17 @@ from autodidact.config import runtime_settings
 from autodidact.db import SessionLocal, engine, init_database
 from autodidact.experiments import (
     ModelMigrationProtocol,
-    evaluate_suite,
     freeze_suite,
+    prepare_suite_file,
     validate_skill,
 )
 from autodidact.goals.scorer import goal_score
+from autodidact.learning.reliable_evaluation import (
+    load_frozen,
+    recompute_run,
+    run_benchmark,
+    verify_frozen,
+)
 from autodidact.memory import MemoryConsolidator
 from autodidact.reporting import longitudinal_report
 from autodidact.repository import Repository
@@ -39,6 +45,19 @@ async def controlled(action):
 
 # 功能：把增量操作函数注册到 Typer；注册过程不执行实际学习任务。
 def register_commands(app):
+    # 功能：仅校验本地题集/真值与摘要，无数据库/模型操作，供冻结前准备。
+    @app.command("check-benchmark")
+    def check_benchmark(path: str):
+        payload = prepare_suite_file(path)
+        print(
+            {
+                "protocol": payload.get("protocol", "legacy_benchmark_v1"),
+                "sha256": payload["sha256"],
+                "items": len(payload["items"]),
+                "note": "格式/快照校验不认证专家身份或语义独立性",
+            }
+        )
+
     # 功能：将人工标题和描述转为高优先级目标，去重保存并返回 ID。
     @app.command("add-goal")
     def add_goal(title: str, description: str = ""):
@@ -84,20 +103,52 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
-    # 功能：加载指定冻结基准，按是否允许接纳记忆执行评估并保存报告。
+    # 功能：校验冻结版本后评估；可指定基线做同模型/同记忆的真实延迟保持复测。
     @app.command("evaluate-benchmark")
-    def evaluate_benchmark(benchmark_id: str, use_memory: bool = False):
-        # 功能：在受控数据库操作中加载指定冻结基准，按是否允许接纳记忆执行评估并保存报告。
+    def evaluate_benchmark(
+        benchmark_id: str, use_memory: bool = False, retention_baseline: str = ""
+    ):
+        # 功能：在控制器锁内执行版本化评估并保存新报告，不改既有分数/信念。
         async def action(repo, llm):
-            suite = await repo.s.get(models.ResearchReport, UUID(benchmark_id))
-            if suite is None or suite.kind != "frozen_benchmark":
-                raise typer.BadParameter("冻结基准不存在")
-            memory = await repo.accepted_memory() if use_memory else []
-            result = await evaluate_suite(llm, build_judge(engine), suite.payload["items"], memory)
-            report = await repo.save_report(
-                "benchmark_run", {**result, "benchmark_id": benchmark_id, "memory_snapshot": memory}
+            return await run_benchmark(
+                repo,
+                llm,
+                build_judge(engine),
+                benchmark_id,
+                use_memory=use_memory,
+                baseline_id=retention_baseline or None,
             )
-            return {"report_id": str(report.id), "score": result["score"], "n": result["n"]}
+
+        print(asyncio.run(controlled(action)))
+
+    # 功能：离线于模型重算可靠报告的逐题分数，保存独立审计报告，不覆盖原报告。
+    @app.command("regrade-benchmark")
+    def regrade_benchmark(report_id: str):
+        # 功能：读取原运行/保持报告及冻结真值，校验后仅用固定规则复算，不调用模型。
+        async def action(repo, llm):
+            original = await repo.s.get(models.ResearchReport, UUID(report_id))
+            if original is None or original.kind not in {"benchmark_run", "benchmark_retention"}:
+                raise ValueError("需要基准运行或保持报告ID")
+            frozen = await load_frozen(repo, original.payload["benchmark_id"])
+            suite = verify_frozen(frozen.payload)
+            if suite is None:
+                raise ValueError("旧模型裁判报告不能冒充确定性真值重算")
+            result = recompute_run(original.payload, suite)
+            report = await repo.save_report(
+                "benchmark_regrade",
+                {
+                    **result,
+                    "original_report_id": report_id,
+                    "benchmark_id": str(frozen.id),
+                    "original_score": original.payload.get("score"),
+                    "note": "重算只新增审计，不覆盖旧报告；不会执行保存的答案/模型建议。",
+                },
+            )
+            return {
+                "report_id": str(report.id),
+                "score": result["score"],
+                "complete": result["complete"],
+            }
 
         print(asyncio.run(controlled(action)))
 
