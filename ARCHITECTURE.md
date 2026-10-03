@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-03；业务功能基线 d7f6583，文档/注释起点 a92bbad，f47ff0a 后补争议缓存刷新修复，schema HEAD 20261002_0005。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-03；原业务基线 d7f6583，后续含争议缓存修复与 F01-A 主张范围/核验审计，schema HEAD 20261003_0006。本文描述当前代码，不替代 [实现/缺口对照](doc/03现有能力与实现对照.md)或 [原始要求历史](Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -32,16 +32,16 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引覆盖仓库自己维护的 **89 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
+以下逐文件索引覆盖仓库自己维护的 **91 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
 
-每个 Python 文件首部有中文“文件职责”；全部 **396 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。已有 docstring、提示词和接口保持原样，用注释补说明以避免改变 __doc__ 或运行行为。数据模型自动生成的方法不在手工函数计数中。
+每个 Python 文件首部有中文“文件职责”；全部 **434 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。注释维护保留原行为；本轮 F01-A 则有明确协议/schema/提示词增量，见第 11 节。数据模型自动生成的方法不在手工函数计数中。
 
 ### 3.1 入口、控制器、配置与持久状态
 
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/__init__.py](src/autodidact/__init__.py) | 声明 autodidact 包并保留版本标识，具体能力由各模块提供。 | 包边界 / 无显式方法 |
-| [src/autodidact/advanced_commands.py](src/autodidact/advanced_commands.py) | 注册三实体检索、来源血缘回填和持久学习会话检查/恢复 CLI。 | `register_advanced_commands` |
+| [src/autodidact/advanced_commands.py](src/autodidact/advanced_commands.py) | 注册主张引文/范围审计、三实体检索、来源血缘回填和会话检查/恢复 CLI。 | `register_advanced_commands` |
 | [src/autodidact/agent.py](src/autodidact/agent.py) | 组织持久学习主循环：召回、研究、核证、争议、评估、晋升和续跑，模型不直接决定真相。 | `AutonomousLearner._beliefs_for_claim`、`AutonomousLearner._resume_signature`、`AutonomousLearner._planning_inputs`、`AutonomousLearner._index_entity`、其余见代码内注释 |
 | [src/autodidact/benchmark.py](src/autodidact/benchmark.py) | 保留早期文件式基准评分接口；当前 CLI 冻结实验走 experiments.py。 | `run_benchmark` |
 | [src/autodidact/cli.py](src/autodidact/cli.py) | 注册命令行主入口、日志、初始化、学习循环、状态和冻结基准入口。 | `configure_logging`、`init_db_cmd`、`bootstrap_cmd`、`bootstrap_cmd._run`、其余见代码内注释 |
@@ -66,7 +66,7 @@ CLI / 本地 Workbench
 | [src/autodidact/retrieval.py](src/autodidact/retrieval.py) | 维护 Goal/Claim/Belief 派生索引并融合关键词、向量和有界降级召回。 | `tokens`、`entity_text`、`RetrievalIndex.sync`、`RetrievalIndex.embed_entity`、其余见代码内注释 |
 | [src/autodidact/runtime.py](src/autodidact/runtime.py) | 提供控制器互斥和 UTC 每日预算预留/结算，避免无界外部调用。 | `controller_lock`、`OperationBudget.reserve`、`OperationBudget.finish`、`BudgetedSearch.search` |
 | [src/autodidact/scheduling.py](src/autodidact/scheduling.py) | 在实际学习运行时检查可选 Day 0/7/14/21/30 冻结基准里程碑。 | `scheduled_benchmarks` |
-| [src/autodidact/schemas.py](src/autodidact/schemas.py) | 定义规划、来源、主张、评估、目标、争议及模型回答的 Pydantic 协议和约束。 | 数据结构、常量或兼容别名 |
+| [src/autodidact/schemas.py](src/autodidact/schemas.py) | 定义结构化协议与约束，ClaimScope 表示待核验条件/时间/单位，不代表真值。 | `ClaimScope.terms`、`ClaimScope.missing_from`及数据结构 |
 | [src/autodidact/workbench.py](src/autodidact/workbench.py) | 提供仅回环地址可访问的研究工作台，操作目标/学习并基于接纳记忆解释问题。 | `Workbench.learn`、`Workbench.dispatch`、`Workbench.connection`、`serve` |
 
 ### 3.2 模型与目标
@@ -95,7 +95,7 @@ CLI / 本地 Workbench
 | [src/autodidact/knowledge/promotion.py](src/autodidact/knowledge/promotion.py) | 结合评估、开放争议、独立来源数量和质量控制信念晋升。 | `BeliefPromotionPolicy.decide` |
 | [src/autodidact/knowledge/resolution_claim.py](src/autodidact/knowledge/resolution_claim.py) | 限制条件化结论必须来自对应争议已记录的调查会话。 | `conditional_claim` |
 | [src/autodidact/knowledge/sources.py](src/autodidact/knowledge/sources.py) | 规范 URL/出版方、规则初分来源质量，按出版方/正文/血缘折叠独立证据组。 | `normalize_url`、`publisher_key`、`RuleBasedSourceQualityClassifier.assess`、`_is_government_host`、其余见代码内注释 |
-| [src/autodidact/knowledge/support_assessment.py](src/autodidact/knowledge/support_assessment.py) | 对已定位原文判定支持、矛盾、条件或不清楚，失败保持未验证。 | `SupportAssessment.supported_source_ids`、`ClaimSupportAssessor.assess` |
+| [src/autodidact/knowledge/support_assessment.py](src/autodidact/knowledge/support_assessment.py) | 对锚定原文核验完整主张及显式范围，保留协议/上下文/模型观察审计，失败不放行。 | `SupportAssessment.supported_source_ids`、`ClaimSupportAssessor.assess` |
 
 ### 3.4 规划、综合、闭卷评估与反思
 
@@ -134,6 +134,7 @@ CLI / 本地 Workbench
 | [migrations/versions/20260920_0003_epistemic_integrity.py](migrations/versions/20260920_0003_epistemic_integrity.py) | 增加主张引文、认识论幂等约束、争议历史 metadata 和信念向量索引。 | `upgrade`、`downgrade` |
 | [migrations/versions/20261002_0004_learning_operations.py](migrations/versions/20261002_0004_learning_operations.py) | 增加持久预算事件、研究报告和技能验证 metadata，不删除旧认知。 | `upgrade`、`downgrade` |
 | [migrations/versions/20261002_0005_lineage_resume_retrieval.py](migrations/versions/20261002_0005_lineage_resume_retrieval.py) | 增加来源依赖、学习工作项和三实体派生检索索引。 | `upgrade`、`downgrade` |
+| [migrations/versions/20261003_0006_claim_scope.py](migrations/versions/20261003_0006_claim_scope.py) | 只增加 claims.scope 和 claim_evidence.assessment；旧值未知，回退丢新增两列信息。 | `upgrade`、`downgrade` |
 | [scripts/autodidact.spec](scripts/autodidact.spec) | 定义 PyInstaller 资源、隐藏模块和文件夹发布结构，不打包真实密钥、学习数据库或 Chromium 用户资料。 | Analysis / EXE / COLLECT |
 | [scripts/autodidact_launcher.py](scripts/autodidact_launcher.py) | 作为 EXE 入口分离用户配置与程序资源；默认启动本地工作台。 | `main` |
 | [scripts/build_exe.ps1](scripts/build_exe.ps1) | 使用项目 .venv 安装打包/PDF依赖并生成 EXE 文件夹；会重写构建输出，数据库与用户密钥另行配置。 | 顺序执行的准备/构建步骤 |
@@ -146,6 +147,7 @@ CLI / 本地 Workbench
 | --- | --- | --- |
 | [tests/test_claim_evidence_persistence.py](tests/test_claim_evidence_persistence.py) | 检查主张证据的语义状态持久化与已知唯一约束竞争识别。 | `test_legacy_anchor_without_semantic_support_cannot_remain_claim_evidence`、`test_mixed_supported_and_contradictory_quotes_disqualify_same_source`、`test_only_known_unique_constraint_is_safe_to_recover`、`test_asyncpg_wrapped_unique_constraint_is_recovered` |
 | [tests/test_claim_support.py](tests/test_claim_support.py) | 检查引文是否能逐字定位到已读来源，拒绝伪造或未读 URL。 | `test_verbatim_citation_is_anchored_to_read_source`、`test_unread_or_nonverbatim_citation_cannot_supply_claim_source_id` |
+| [tests/test_claim_scope.py](tests/test_claim_scope.py) | 检查范围协议、完整覆盖/失败门控、隐藏范围、防重复提取绕过、持久审计与续跑身份；使用替身而非真实模型/数据库。 | `test_scope_requires_explicit_complete_coverage`、`test_scope_and_evidence_audit_persist_end_to_end`、`test_persisted_scope_cannot_be_bypassed_by_reassessment`及文件内注释 |
 | [tests/test_dispute_resolution.py](tests/test_dispute_resolution.py) | 检查四结果决议策略与 Resolver 的数据库证据门控。 | `test_resolution_policy_accepts_all_four_explicit_outcomes_when_qualified`、`test_resolution_policy_rejects_unanchored_or_incomplete_proposal`、`test_resolver_applies_only_a_policy_approved_decision`、`test_resolver_rejects_source_ids_without_database_backed_evidence` |
 | [tests/test_dispute_transactions.py](tests/test_dispute_transactions.py) | 检查决议事务、原文引文、行锁缓存刷新和重放幂等。 | `test_unresolved_resolution_writes_one_history_and_retries_idempotently`、`test_adopt_new_resolution_commits_new_belief_evidence_and_histories_together`、`test_conditional_resolution_rejects_statement_not_supported_by_the_claim`、`test_repository_rejects_unlinked_sources_for_new_claim`、其余见代码内注释 |
 | [tests/test_embeddings.py](tests/test_embeddings.py) | 使用 HTTP 替身检查嵌入响应形状和关闭模式降级。 | `test_openai_compatible_embedding_provider_validates_vector_shape`、`test_disabled_embedding_provider_is_a_graceful_fallback` |
@@ -189,7 +191,7 @@ CLI / 本地 Workbench
 | 身份/意图 | agents、goals | 使命、目标状态与优先级、父子关系 |
 | 情景记忆/续跑 | learning_sessions、learning_steps | 计划/结果/反思/尝试历史，成功工作项及输入键 |
 | 原文和来源 | sources、source_links | 提取文字、质量 metadata、依赖/引用关系 |
-| 候选及支持 | claims、claim_evidence | 主张提议、原文片段与锚点/支持状态 |
+| 候选及支持 | claims、claim_evidence | 主张/范围提议、原文片段、锚点/支持状态与范围覆盖审计 |
 | 接纳知识 | beliefs、evidence、belief_history | 状态/置信/向量、信念证据和每次变更历史 |
 | 矛盾 | disputes | 旧状态、调查、决议与未解决状态 |
 | 评估/方法 | evaluations、skills | 分维度评估审计，研究步骤和验证 metadata |
@@ -231,7 +233,7 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 
 所有 schema 变化走 Alembic；完整旧结构可识别 stamp 后升级，未知部分结构拒绝自动迁移。列名匹配不是数据/索引/约束完整性证明。新索引/血缘/续跑不删除旧核心认知，也不伪造历史；详见 [迁移说明](migrations/README.md)。
 
-上次文档整合仅做静态核对；本次新增中文注释仍无新迁移、无学习数据库写入，方法 AST 与注释前一致。最新功能运行验收、私有真值、旧信念盲审、完整 Mastery/世界模型、多模型管线和长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
+此前文档/注释整理没有新迁移，方法 AST 保持不变；之后的争议修复和本轮 F01-A 是业务增量，0006 仅新增两列，未实际写学习库。实库运行验收、私有真值、旧信念盲审、完整 Mastery/世界模型、多模型管线和长期实证仍待完成，见 [04](doc/04待开发能力清单.md)及 [06](doc/06后续开发计划与构想.md)。
 
 ## 8. 适合第一次读代码的架构解释
 
@@ -280,4 +282,14 @@ EXE 是外部数据库模式的文件夹构建配方，用户配置保存在 LOC
 
 2026-10-03 在 f47ff0a 后修复 apply_dispute_resolution：SELECT FOR UPDATE 配合 populate_existing=True，避免会话已加载争议时仍用旧决议属性。相同决议重试复用已生成信念，不同决议重试拒绝改写；不改变证据门槛。事务测试补齐 scalars/all 和按 Claim/Source/status 过滤原文，并断言新 Evidence 保留真实引用。
 
-新增原文筛选及两类缓存重试回归；当前完整 pytest 为 61 passed / 2 skipped，compileall、Ruff 通过。跳过项仍是未配置隔离库的 PostgreSQL 集成测试，真实数据库并发验收另属 V03。本次没有 schema 迁移、回填或学习数据写入；第 9 节保留上一轮注释工作的历史结果。
+新增原文筛选及两类缓存重试回归；该修复当时完整 pytest 为 61 passed / 2 skipped，compileall、Ruff 通过。跳过项是未配置隔离库的 PostgreSQL 集成测试，真实数据库并发验收另属 V03。该轮没有 schema 迁移、回填或学习数据写入；第 9 节保留更早注释工作的历史结果。
+
+## 11. F01-A：主张范围与原文覆盖审计
+
+链路：Synthesizer → ClaimDraft.scope → 原文锚点 → ClaimSupportAssessor → Repository.add_claim / record_claim_evidence → 晋升或争议 → show-claim。范围限制须同时留在 statement 中，确保现有检索、冲突和闭卷记忆不丢掉限制；scope 是提议，不是新的事实来源。
+
+ClaimScope 记录 conditions/time_scope/units，范围正文匹配是保守文字检查，不做同义/单位换算。带显式范围的 supports 观察还需 complete 覆盖；漏范围、未知、服务失败或库内首次范围与重提取不一致，不能产生支持来源。ClaimEvidence.assessment 保留协议、上下文/hash、范围覆盖、模型身份及错误，仍是观察，不保证来源真实。
+
+0006 的两列默认 {}，不修改旧状态/原文/唯一键；新信念 metadata 保留 claim_scope，争议重审沿用双方已有范围。claim_scope_v1 加入续跑签名，旧进行中尝试须人工重启或使用兼容旧版本，不混算缓存结果。真实部署先停写、备份、init-db。
+
+本轮完整 pytest：78 passed / 2 skipped；compileall、Ruff、show-claim --help 通过；迁移仅离线/结构识别验证，未跑真实库升级或付费模型。F01 仍缺来源书目观察、复合主张拆分与内容级质量分类，按 04/06 增量推进。

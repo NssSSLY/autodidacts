@@ -1,10 +1,10 @@
 # 文件职责：定义规划、来源、主张、评估、目标、争议及模型回答的 Pydantic 协议和约束。
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class SearchQueryPlan(BaseModel):
@@ -27,6 +27,31 @@ class SourceDocument(BaseModel):
     credibility_score: float = Field(default=0.3, ge=0, le=1)
 
 
+ScopeText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class ClaimScope(BaseModel):
+    # 未提供范围表示未知/未提取，不代表主张无条件、永久有效或无单位。
+    conditions: list[ScopeText] = Field(default_factory=list, max_length=20)
+    time_scope: str = Field(default="", max_length=500)
+    units: list[ScopeText] = Field(default_factory=list, max_length=20)
+
+    # 功能：列出待核验的范围限制，空值不被解释为普遍适用。
+    def terms(self) -> list[str]:
+        return [
+            *self.conditions,
+            *([self.time_scope.strip()] if self.time_scope.strip() else []),
+            *self.units,
+        ]
+
+    # 功能：找出未出现在主张正文的显式范围，避免结构字段隐藏或扩大主张语义。
+    def missing_from(self, statement: str) -> list[str]:
+        from autodidact.normalization import normalize_text_key
+
+        text = normalize_text_key(statement)
+        return [term for term in self.terms() if normalize_text_key(term) not in text]
+
+
 class ClaimDraft(BaseModel):
     statement: str
     topic: str
@@ -34,6 +59,7 @@ class ClaimDraft(BaseModel):
     confidence: float = Field(ge=0, le=1)
     source_urls: list[str] = Field(default_factory=list)
     citations: list[ClaimCitation] = Field(default_factory=list)
+    scope: ClaimScope = Field(default_factory=ClaimScope)
 
 
 class ClaimCitation(BaseModel):

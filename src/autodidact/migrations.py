@@ -16,7 +16,9 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261002_0005"
+HEAD_REVISION = "20261003_0006"
+RETRIEVAL_REVISION = "20261002_0005"
+POST_RETRIEVAL_COLUMNS = {"claims": {"scope"}, "claim_evidence": {"assessment"}}
 OPERATIONS_REVISION = "20261002_0004"
 POST_OPERATIONS_TABLES = {"source_links", "learning_steps", "retrieval_entries"}
 EPISTEMIC_REVISION = "20260920_0003"
@@ -42,6 +44,7 @@ MigrationAction = Literal[
     "stamp_source_provenance_then_upgrade",
     "stamp_epistemic_then_upgrade",
     "stamp_operations_then_upgrade",
+    "stamp_retrieval_then_upgrade",
     "stamp_head",
 ]
 
@@ -72,11 +75,19 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
-# 功能：从当前结构去除 0005 新表，得到 0004 的预期表列集合。
+# 功能：从当前结构扣除 0006 新列，得到 0005 完整旧表列集合。
+def retrieval_schema_columns() -> dict[str, set[str]]:
+    columns = expected_schema_columns()
+    for name, added in POST_RETRIEVAL_COLUMNS.items():
+        columns[name].difference_update(added)
+    return columns
+
+
+# 功能：从 0005 结构去除来源边/工作项/检索表，得到 0004 的预期表列集合。
 def operational_schema_columns() -> dict[str, set[str]]:
     return {
         name: set(values)
-        for name, values in expected_schema_columns().items()
+        for name, values in retrieval_schema_columns().items()
         if name not in POST_OPERATIONS_TABLES
     }
 
@@ -122,6 +133,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == retrieval_schema_columns():
+        return "stamp_retrieval_then_upgrade"
     if actual == operational_schema_columns():
         return "stamp_operations_then_upgrade"
     if actual == epistemic_schema_columns():
@@ -180,6 +193,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, EPISTEMIC_REVISION)
     elif action == "stamp_operations_then_upgrade":
         command.stamp(config, OPERATIONS_REVISION)
+    elif action == "stamp_retrieval_then_upgrade":
+        command.stamp(config, RETRIEVAL_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

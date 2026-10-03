@@ -1,6 +1,7 @@
 # 文件职责：封装认知数据库读写及事务：目标、来源、主张锚点、信念、争议、历史和评估。
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -23,7 +24,7 @@ from autodidact.knowledge.sources import (
 from autodidact.learning_state import LearningState
 from autodidact.normalization import claim_statement_key, normalize_text_key, stable_key
 from autodidact.retrieval import RetrievalIndex
-from autodidact.schemas import CandidateGoal, ClaimDraft, SourceDocument
+from autodidact.schemas import CandidateGoal, ClaimDraft, ClaimScope, SourceDocument
 
 _ACTIVE_GOAL_STATUSES = (
     GoalStatus.DISCOVERED,
@@ -259,7 +260,7 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
-    # 功能：按会话和规范主张去重候选 Claim；唯一约束竞争只在已知约束上恢复，不自动创建信念。
+    # 功能：保存候选主张及范围提议，按会话/正文去重保留首次范围；已知唯一约束竞争可恢复，不自动创建信念。
     async def add_claim(
         self, draft: ClaimDraft, learning_session_id: UUID, source_ids: list[str]
     ) -> models.Claim:
@@ -280,6 +281,7 @@ class Repository(LearningState):
             reasoning=draft.reasoning,
             confidence=draft.confidence,
             source_ids=list(dict.fromkeys(source_ids)),
+            scope=draft.scope.model_dump(mode="json"),
         )
         self.s.add(item)
         try:
@@ -303,13 +305,29 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
-    # 功能：持久化引文锚点及语义判定，排除同源混合矛盾记录，避免旧锚点冒充已支持证据。
+    # 功能：保存锚点/范围审计，写入前核对已存范围，排除重复提取丢范围和同源混合矛盾的放行。
     async def record_claim_evidence(
         self, claim: models.Claim, records: list[ClaimEvidenceVerification]
     ) -> None:
+        persisted_scope = ClaimScope.model_validate(getattr(claim, "scope", None) or {})
         for record in records:
             if record.source_id is None:
                 continue
+            if (
+                record.status == "supported"
+                and persisted_scope.terms()
+                and (
+                    persisted_scope.missing_from(claim.statement)
+                    or record.assessment.get("scope") != persisted_scope.model_dump(mode="json")
+                    or record.assessment.get("scope_coverage") != "complete"
+                )
+            ):
+                record = replace(
+                    record,
+                    status="unclear",
+                    reason="persisted_scope_not_covered",
+                    assessment={**record.assessment, "scope_gate": "rejected"},
+                )
             source_id = UUID(record.source_id)
             q = await self.s.execute(
                 select(models.ClaimEvidence).where(
@@ -320,9 +338,14 @@ class Repository(LearningState):
             )
             existing = q.scalar_one_or_none()
             if existing:
-                if existing.status != record.status or existing.reason != record.reason:
+                if (
+                    existing.status != record.status
+                    or existing.reason != record.reason
+                    or (getattr(existing, "assessment", None) or {}) != record.assessment
+                ):
                     existing.status = record.status
                     existing.reason = record.reason
+                    existing.assessment = record.assessment
                     await self.s.commit()
                 continue
             self.s.add(
@@ -333,6 +356,7 @@ class Repository(LearningState):
                     excerpt_hash=record.excerpt_hash,
                     status=record.status,
                     reason=record.reason,
+                    assessment=record.assessment,
                 )
             )
             try:
@@ -351,6 +375,42 @@ class Repository(LearningState):
         if claim.source_ids != qualified:
             claim.source_ids = qualified
             await self.s.commit()
+
+    # 功能：有界读取主张范围、引文状态及核验审计；不重新判真、不调用外部模型。
+    async def claim_audit(self, claim_id: UUID, limit: int = 20) -> dict:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        claim = await self.s.get(models.Claim, claim_id)
+        if claim is None:
+            raise ValueError("主张不存在")
+        result = await self.s.execute(
+            select(models.ClaimEvidence)
+            .where(models.ClaimEvidence.claim_id == claim_id)
+            .order_by(models.ClaimEvidence.created_at, models.ClaimEvidence.id)
+            .limit(limit + 1)
+        )
+        rows = list(result.scalars())
+        evidence = []
+        for row in rows[:limit]:
+            source = await self.s.get(models.Source, row.source_id)
+            evidence.append(
+                {
+                    "source_id": str(row.source_id),
+                    "source_url": source.url if source else None,
+                    "excerpt": row.excerpt,
+                    "status": row.status,
+                    "reason": row.reason,
+                    "assessment": row.assessment or {},
+                }
+            )
+        return {
+            "claim_id": str(claim.id),
+            "statement": claim.statement,
+            "scope": claim.scope or {},
+            "evidence": evidence,
+            "truncated": len(rows) > limit,
+            "note": "范围与判定是可审计提议；空范围表示未知，不表示普遍适用，模型观察不是真值",
+        }
 
     # 功能：读取最新非撤回信念，作为无需向量的兼容记忆入口。
     async def recent_beliefs(self, limit: int = 30) -> list[models.Belief]:
@@ -452,7 +512,10 @@ class Repository(LearningState):
             evidence_score=claim.confidence if evidence_score is None else evidence_score,
             test_score=test_score,
             stability_score=0.3 if verified else 0.1,
-            metadata_json={"promoted_claim_ids": [str(claim.id)]},
+            metadata_json={
+                "promoted_claim_ids": [str(claim.id)],
+                "claim_scope": getattr(claim, "scope", None) or {},
+            },
             source_count=(
                 len(claim.source_ids)
                 if independent_source_count is None
@@ -787,6 +850,7 @@ class Repository(LearningState):
                     metadata_json={
                         "conditions": conditions,
                         "resolved_from_dispute": str(dispute.id),
+                        "claim_scope": conclusion_claim.scope or {},
                     },
                 )
                 self.s.add(resolved_belief)

@@ -176,7 +176,7 @@ class RetrievalHit:
     score: float
     ranks: dict
 
-    # 功能：将召回实体、排序分数及通道名转换成命令/工作台可显示的数据。
+    # 功能：展示召回实体、排序通道及主张范围；范围空值为未知，相关性不代表事实可信度。
     def as_dict(self):
         return {
             "kind": self.kind,
@@ -186,6 +186,8 @@ class RetrievalHit:
             "text": entity_text(self.kind, self.row),
             "status": getattr(self.row, "status", "candidate_claim"),
             "confidence": getattr(self.row, "confidence", None),
+            "claim_scope": getattr(self.row, "scope", None)
+            or (getattr(self.row, "metadata_json", None) or {}).get("claim_scope", {}),
         }
 
 

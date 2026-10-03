@@ -116,6 +116,7 @@ class Claim(Base):
     reasoning: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     source_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    scope: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -135,6 +136,7 @@ class ClaimEvidence(Base):
     excerpt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
+    assessment: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

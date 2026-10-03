@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from autodidact.knowledge.sources import normalize_url
@@ -22,6 +22,7 @@ class ClaimEvidenceVerification:
     excerpt_hash: str
     status: str
     reason: str
+    assessment: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-# 文件职责：注册三实体检索、来源血缘回填和持久学习会话检查/恢复 CLI。
+# 文件职责：注册主张范围/引文审计、三实体检索、来源血缘回填和持久会话检查/恢复 CLI。
 """来源血缘、持久检查点与混合检索的人工可见入口。"""
 
 from __future__ import annotations
@@ -21,8 +21,17 @@ from autodidact.retrieval import HybridRetriever
 from autodidact.schemas import SourceDocument
 
 
-# 功能：注册检索、血缘和续跑维护命令，不在注册时连接外部服务。
+# 功能：注册主张审计、检索、血缘和续跑维护命令，不在注册时连接外部服务。
 def register_advanced_commands(app):
+    # 功能：显示已有主张的范围及原文核验审计，不触发新学习或模型调用。
+    @app.command("show-claim")
+    def show_claim(claim_id: UUID, limit: int = typer.Option(20, min=1, max=100)):
+        # 功能：在既有受控会话中有界查询主张及证据审计，未知范围明确展示为空。
+        async def action(repo, llm):
+            return await repo.claim_audit(claim_id, limit)
+
+        print(asyncio.run(controlled(action)))
+
     # 功能：按批次回填 Goal/Claim/Belief 派生索引，可选计算向量并返回进度。
     @app.command("rebuild-retrieval")
     def rebuild_retrieval(limit: int = typer.Option(200, min=1, max=10000), vectors: bool = False):

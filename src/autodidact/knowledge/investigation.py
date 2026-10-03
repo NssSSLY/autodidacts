@@ -12,7 +12,7 @@ from autodidact.knowledge.sources import normalize_url
 from autodidact.knowledge.support_assessment import ClaimSupportAssessor
 from autodidact.learning.planner import Planner
 from autodidact.learning.synthesizer import Synthesizer
-from autodidact.schemas import ClaimDraft, DisputeResolutionProposal
+from autodidact.schemas import ClaimDraft, ClaimScope, DisputeResolutionProposal
 from autodidact.tools.reader import WebReader
 
 
@@ -29,7 +29,7 @@ class DisputeInvestigator:
             ),
         )
 
-    # 功能：有界开展争议调查，重审双方原文支持并保存条件 Claim，合法提议才应用，否则保留未解决。
+    # 功能：保留双方已存范围开展独立调查，保存逐引文审计及条件 Claim，合法提议才应用。
     async def investigate(self, dispute_id, attempt):
         dispute = await self.repo.s.get(models.Dispute, UUID(str(dispute_id)))
         if dispute is None:
@@ -86,12 +86,16 @@ class DisputeInvestigator:
         drafts = [
             ClaimDraft(
                 statement=belief.statement,
+                scope=ClaimScope.model_validate(
+                    (belief.metadata_json or {}).get("claim_scope") or {}
+                ),
                 topic=belief.topic,
                 confidence=0.5,
                 citations=[c for d in learned.claims for c in d.citations],
             ),
             ClaimDraft(
                 statement=incoming.statement,
+                scope=ClaimScope.model_validate(incoming.scope or {}),
                 topic=incoming.topic or belief.topic,
                 confidence=0.5,
                 citations=[c for d in learned.claims for c in d.citations],

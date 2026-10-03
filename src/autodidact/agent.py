@@ -24,7 +24,7 @@ from autodidact.knowledge.conflicts import ConflictDetector
 from autodidact.knowledge.investigation import DisputeInvestigator
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import normalize_url
-from autodidact.knowledge.support_assessment import ClaimSupportAssessor
+from autodidact.knowledge.support_assessment import SUPPORT_PROTOCOL, ClaimSupportAssessor
 from autodidact.learning.evaluator import Evaluator
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
@@ -114,11 +114,12 @@ class AutonomousLearner:
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
-    # 功能：计算模型、嵌入、学习策略和目标内容的签名，防止在不兼容配置下继续旧尝试。
+    # 功能：计算模型、嵌入、主张核验协议、策略和目标签名，防止在不兼容配置下继续旧尝试。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
             "protocol": PROTOCOL,
+            "claim_support_protocol": SUPPORT_PROTOCOL,
             "config": self.cfg.model_dump(mode="json"),
             "learner": [self.llm.provider_name, self.llm.model_name, settings.llm_base_url],
             "judge": [
@@ -323,7 +324,7 @@ class AutonomousLearner:
                 return {
                     "status": "resume_incompatible",
                     "session_id": str(learning_session.id),
-                    "reason": "模型、学习策略或目标已改变；请恢复原配置再续跑，不能混用旧结果",
+                    "reason": "模型、学习策略、主张核验协议或目标已改变；请恢复原版本/配置或人工重启，不能混用旧结果",
                 }
         else:
             await self.ensure_goal_pool()

@@ -11,6 +11,7 @@ from autodidact.migrations import (
     baseline_schema_columns,
     decide_initialization_action,
     expected_schema_columns,
+    retrieval_schema_columns,
     source_provenance_schema_columns,
 )
 
@@ -39,6 +40,10 @@ def test_initial_migration_generates_offline_sql(capsys):
     assert "uq_claims_session_statement_key_current" in sql
     assert "uq_evidence_dedup_key_current" in sql
     assert "uq_disputes_dedup_key_current" in sql
+    assert "ALTER TABLE claims ADD COLUMN scope JSONB DEFAULT '{}'::jsonb NOT NULL" in sql
+    assert (
+        "ALTER TABLE claim_evidence ADD COLUMN assessment JSONB DEFAULT '{}'::jsonb NOT NULL" in sql
+    )
 
 
 # 功能：验证空库/已有版本表使用正常 upgrade 路径。
@@ -93,3 +98,29 @@ def test_mismatched_legacy_columns_are_rejected():
 
     with pytest.raises(RuntimeError, match="beliefs"):
         decide_initialization_action(legacy)
+
+
+# 功能：验证完整未版本化 0005 结构升级路径，旧结构不含范围/审计列。
+def test_retrieval_schema_is_stamped_at_0005_then_upgraded():
+    legacy = retrieval_schema_columns()
+    assert "scope" not in legacy["claims"]
+    assert "assessment" not in legacy["claim_evidence"]
+    assert "scope" not in baseline_schema_columns()["claims"]
+    assert decide_initialization_action(legacy) == "stamp_retrieval_then_upgrade"
+
+
+# 功能：验证部分新增列不会被错误 stamp 为完整 0005/0006。
+def test_partial_scope_expansion_is_rejected():
+    legacy = retrieval_schema_columns()
+    legacy["claims"].add("scope")
+    with pytest.raises(RuntimeError, match="claim_evidence"):
+        decide_initialization_action(legacy)
+
+
+# 功能：离线核对回退仅删新增列，不删除核心认知表；不执行实际降级。
+def test_scope_downgrade_only_removes_added_columns(capsys):
+    command.downgrade(alembic_config(), "20261003_0006:20261002_0005", sql=True)
+    sql = capsys.readouterr().out
+    assert "ALTER TABLE claims DROP COLUMN scope" in sql
+    assert "ALTER TABLE claim_evidence DROP COLUMN assessment" in sql
+    assert "DROP TABLE" not in sql
