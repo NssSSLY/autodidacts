@@ -16,7 +16,8 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261003_0006"
+HEAD_REVISION = "20261003_0007"
+SCOPE_REVISION = "20261003_0006"
 RETRIEVAL_REVISION = "20261002_0005"
 POST_RETRIEVAL_COLUMNS = {"claims": {"scope"}, "claim_evidence": {"assessment"}}
 OPERATIONS_REVISION = "20261002_0004"
@@ -45,6 +46,7 @@ MigrationAction = Literal[
     "stamp_epistemic_then_upgrade",
     "stamp_operations_then_upgrade",
     "stamp_retrieval_then_upgrade",
+    "stamp_scope_then_upgrade",
     "stamp_head",
 ]
 
@@ -75,9 +77,16 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
-# 功能：从当前结构扣除 0006 新列，得到 0005 完整旧表列集合。
-def retrieval_schema_columns() -> dict[str, set[str]]:
+# 功能：从当前结构扣除0007结构审计列，得到0006完整旧表列集合。
+def scope_schema_columns() -> dict[str, set[str]]:
     columns = expected_schema_columns()
+    columns["claims"].discard("structure")
+    return columns
+
+
+# 功能：从0006结构扣除范围/支持审计列，得到0005完整旧表列集合。
+def retrieval_schema_columns() -> dict[str, set[str]]:
+    columns = scope_schema_columns()
     for name, added in POST_RETRIEVAL_COLUMNS.items():
         columns[name].difference_update(added)
     return columns
@@ -133,6 +142,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == scope_schema_columns():
+        return "stamp_scope_then_upgrade"
     if actual == retrieval_schema_columns():
         return "stamp_retrieval_then_upgrade"
     if actual == operational_schema_columns():
@@ -195,6 +206,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, OPERATIONS_REVISION)
     elif action == "stamp_retrieval_then_upgrade":
         command.stamp(config, RETRIEVAL_REVISION)
+    elif action == "stamp_scope_then_upgrade":
+        command.stamp(config, SCOPE_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from autodidact import models
 from autodidact.config import agent_config
 from autodidact.enums import BeliefStatus, DisputeStatus, GoalStatus
+from autodidact.knowledge.bibliography import identifier_links, publication_datetime
 from autodidact.knowledge.claim_support import ClaimEvidenceVerification
+from autodidact.knowledge.content_quality import classify_document
+from autodidact.knowledge.decomposition import eligible_claim
 from autodidact.knowledge.lineage import SourceLineage
 from autodidact.knowledge.resolution_claim import conditional_claim
 from autodidact.knowledge.sources import (
@@ -203,40 +206,77 @@ class Repository(LearningState):
         item.completed_at = datetime.now(UTC)
         await self.s.commit()
 
-    # 功能：按内容 hash 复用来源，补缺失质量/血缘 metadata 并记录依赖边，保留原文。
+    # 功能：按内容 hash 复用原文，持久化未认证书目/正文质量审计；镜像声明不覆盖原作者日期或提高等级。
     async def upsert_source(self, doc: SourceDocument, content_hash: str) -> models.Source:
+        doc = classify_document(doc)
+        bibliography = {
+            **doc.metadata.get("bibliography", {}),
+            "authors": doc.authors,
+            "published_date": doc.published_date,
+            "research_identifiers": [item.model_dump() for item in doc.research_identifiers],
+        }
+        doc = doc.model_copy(
+            update={
+                "metadata": {
+                    **doc.metadata,
+                    "bibliography": bibliography,
+                    "lineage_links": [
+                        *doc.metadata.get("lineage_links", []),
+                        *identifier_links(doc.url, doc.research_identifiers),
+                    ],
+                }
+            }
+        )
         q = await self.s.execute(
             select(models.Source).where(models.Source.content_hash == content_hash)
         )
         found = q.scalar_one_or_none()
         if found:
-            changed = False
             for field, value in (
                 ("normalized_url", doc.normalized_url or normalize_url(doc.url)),
                 ("publisher_key", doc.publisher_key or publisher_key(doc.url)),
-                ("quality_class", doc.quality_class),
-                ("quality_reason", doc.quality_reason),
             ):
                 if not getattr(found, field, None) and value:
                     setattr(found, field, value)
-                    changed = True
-            if doc.metadata:
-                changed = True
-            if doc.lineage_key and not (found.metadata_json or {}).get("lineage_key"):
-                found.metadata_json = {
-                    **(found.metadata_json or {}),
-                    **doc.metadata,
-                    "lineage_key": doc.lineage_key,
-                }
-                changed = True
+            previous = found.metadata_json or {}
+            observations = dict(previous.get("bibliography_observations", {}))
+            key = normalize_url(doc.url)
+            if key in observations or len(observations) < 20:
+                # 每个 URL 的首次声明保持不变；重复读取不制造无限审计历史。
+                observations.setdefault(key, bibliography)
+            same_url = normalize_url(found.url or "") == key
+            metadata = {**previous, "bibliography_observations": observations}
+            if same_url:
+                metadata = {**doc.metadata, **metadata}
+                primary = dict(previous.get("bibliography") or {})
+                changed_fields = []
+                for field in ("authors", "published_date", "research_identifiers"):
+                    if not primary.get(field) and bibliography.get(field):
+                        primary[field] = bibliography[field]
+                        changed_fields.append(field)
+                if not primary:
+                    primary = bibliography
+                elif changed_fields:
+                    primary["initial_audit"] = primary.get(
+                        "initial_audit", primary.get("audit", {})
+                    )
+                    primary["audit"] = bibliography.get("audit", {})
+                metadata["bibliography"] = primary
+                if not found.author and primary.get("authors"):
+                    found.author = "; ".join(primary["authors"])
+                if not found.published_at:
+                    found.published_at = publication_datetime(primary.get("published_date"))
+            metadata["lineage_key"] = previous.get("lineage_key") or doc.lineage_key
+            found.metadata_json = metadata
+            from autodidact.knowledge.content_quality import effective_source_assessment
+
+            quality = effective_source_assessment(found)
+            found.evidence_level, found.credibility_score = (
+                quality.evidence_level,
+                quality.credibility_score,
+            )
+            found.quality_class, found.quality_reason = quality.quality_class, quality.reason
             await self.lineage.record(found, doc)
-            if changed:
-                found.metadata_json = {
-                    **(found.metadata_json or {}),
-                    **doc.metadata,
-                    "lineage_key": doc.lineage_key
-                    or (found.metadata_json or {}).get("lineage_key", ""),
-                }
             await self.s.commit()
             return found
         item = models.Source(
@@ -249,6 +289,8 @@ class Repository(LearningState):
             quality_reason=doc.quality_reason,
             evidence_level=doc.evidence_level,
             credibility_score=doc.credibility_score,
+            author="; ".join(doc.authors) if doc.authors else None,
+            published_at=publication_datetime(doc.published_date),
             content_hash=content_hash,
             extracted_text=doc.text,
             metadata_json={**doc.metadata, "lineage_key": doc.lineage_key},
@@ -305,6 +347,35 @@ class Repository(LearningState):
         await self.s.refresh(item)
         return item
 
+    # 功能：保存首次拆分结论并有界补父引用/调查子句，重复提取不覆盖已有结构门控或范围。
+    async def record_claim_structure(self, claim: models.Claim, audit: dict) -> None:
+        previous = getattr(claim, "structure", None) or {}
+        if not previous:
+            claim.structure = audit
+            await self.s.commit()
+            return
+        parents = list(
+            dict.fromkeys(
+                [*previous.get("parent_claim_ids", []), *audit.get("parent_claim_ids", [])]
+            )
+        )[:30]
+        investigations = list(
+            dict.fromkeys(
+                [
+                    *previous.get("investigation_child_claim_ids", []),
+                    *audit.get("investigation_child_claim_ids", []),
+                ]
+            )
+        )[:40]
+        updated = dict(previous)
+        if parents != previous.get("parent_claim_ids", []) and str(claim.id) not in parents:
+            updated["parent_claim_ids"] = parents
+        if investigations != previous.get("investigation_child_claim_ids", []):
+            updated["investigation_child_claim_ids"] = investigations
+        if updated != previous:
+            claim.structure = updated
+            await self.s.commit()
+
     # 功能：保存锚点/范围审计，写入前核对已存范围，排除重复提取丢范围和同源混合矛盾的放行。
     async def record_claim_evidence(
         self, claim: models.Claim, records: list[ClaimEvidenceVerification]
@@ -313,6 +384,13 @@ class Repository(LearningState):
         for record in records:
             if record.source_id is None:
                 continue
+            if record.status == "supported" and not eligible_claim(claim):
+                record = replace(
+                    record,
+                    status="unclear",
+                    reason="non_atomic_or_unreviewed_parent",
+                    assessment={**record.assessment, "structure_gate": "rejected"},
+                )
             if (
                 record.status == "supported"
                 and persisted_scope.terms()
@@ -371,7 +449,11 @@ class Repository(LearningState):
         statuses: dict[str, set[str]] = {}
         for evidence in q.scalars():
             statuses.setdefault(str(evidence.source_id), set()).add(evidence.status)
-        qualified = [source_id for source_id, values in statuses.items() if values == {"supported"}]
+        qualified = (
+            [source_id for source_id, values in statuses.items() if values == {"supported"}]
+            if eligible_claim(claim)
+            else []
+        )
         if claim.source_ids != qualified:
             claim.source_ids = qualified
             await self.s.commit()
@@ -401,15 +483,45 @@ class Repository(LearningState):
                     "status": row.status,
                     "reason": row.reason,
                     "assessment": row.assessment or {},
+                    "source_bibliography": (source.metadata_json or {}).get("bibliography", {})
+                    if source
+                    else {},
+                    "source_quality": (source.metadata_json or {}).get("quality_audit", {})
+                    if source
+                    else {},
                 }
             )
         return {
             "claim_id": str(claim.id),
             "statement": claim.statement,
             "scope": claim.scope or {},
+            "structure": getattr(claim, "structure", None) or {},
             "evidence": evidence,
             "truncated": len(rows) > limit,
             "note": "范围与判定是可审计提议；空范围表示未知，不表示普遍适用，模型观察不是真值",
+        }
+
+    # 功能：只读展示来源书目声明、正文质量上限及首次同内容URL观察，不联网认证或回填旧数据。
+    async def source_audit(self, source_id: UUID) -> dict:
+        from dataclasses import asdict
+
+        from autodidact.knowledge.content_quality import effective_source_assessment
+
+        source = await self.s.get(models.Source, source_id)
+        if source is None:
+            raise ValueError("来源不存在")
+        metadata = source.metadata_json or {}
+        return {
+            "source_id": str(source.id),
+            "url": source.url,
+            "title": source.title,
+            "author": source.author,
+            "published_at": source.published_at.isoformat() if source.published_at else None,
+            "bibliography": metadata.get("bibliography", {}),
+            "bibliography_observations": metadata.get("bibliography_observations", {}),
+            "quality_audit": metadata.get("quality_audit", {}),
+            "effective_quality": asdict(effective_source_assessment(source)),
+            "note": "书目为未认证声明；旧记录未知不猜测回填，当前正文门控不等于改写历史信念",
         }
 
     # 功能：读取最新非撤回信念，作为无需向量的兼容记忆入口。
@@ -474,6 +586,8 @@ class Repository(LearningState):
         evidence_score: float | None = None,
         independent_source_count: int | None = None,
     ) -> models.Belief:
+        if not eligible_claim(claim):
+            raise ValueError("复合或结构未通过复核的主张不能直接晋升，需分别核验子主张")
         q = await self.s.execute(
             select(models.Belief).where(models.Belief.status != BeliefStatus.RETRACTED)
         )
@@ -705,6 +819,8 @@ class Repository(LearningState):
                 if outcome == "conditional"
                 else claim
             )
+            if not eligible_claim(conclusion):
+                return []
             claim_ids = [conclusion.id]
             linked_ids = None
             accepted_status = "supported"
@@ -721,6 +837,9 @@ class Repository(LearningState):
             if source_id not in requested or (
                 linked_ids is not None and record.source_id not in linked_ids
             ):
+                continue
+            linked_claim = await self.s.get(models.Claim, record.claim_id)
+            if linked_claim is not None and not eligible_claim(linked_claim):
                 continue
             source = await self.s.get(models.Source, record.source_id)
             if source is None or source.evidence_level <= 0:

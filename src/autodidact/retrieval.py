@@ -188,6 +188,7 @@ class RetrievalHit:
             "confidence": getattr(self.row, "confidence", None),
             "claim_scope": getattr(self.row, "scope", None)
             or (getattr(self.row, "metadata_json", None) or {}).get("claim_scope", {}),
+            "claim_structure": getattr(self.row, "structure", None) or {},
         }
 
 

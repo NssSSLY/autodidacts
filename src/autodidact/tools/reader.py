@@ -6,6 +6,8 @@ import hashlib
 from bs4 import BeautifulSoup
 
 from autodidact.config import agent_config
+from autodidact.knowledge.bibliography import extract_bibliography, identifier_links
+from autodidact.knowledge.content_quality import classify_document
 from autodidact.knowledge.sources import (
     RuleBasedSourceQualityClassifier,
     normalize_url,
@@ -43,11 +45,21 @@ class WebReader:
             decoded = body.decode(encoding, errors="replace")
             lineage = normalize_url(final_url)
             lineage_links = []
+            bibliography = {
+                "authors": [],
+                "published_date": "",
+                "research_identifiers": [],
+                "audit": {},
+            }
             if "text/html" in content_type:
                 soup = BeautifulSoup(decoded, "html.parser")
                 from autodidact.knowledge.lineage import extract_lineage
 
                 lineage_links = extract_lineage(soup, final_url, url)
+                bibliography = extract_bibliography(soup, final_url)
+                lineage_links.extend(
+                    identifier_links(final_url, bibliography["research_identifiers"])
+                )
                 canonical = soup.find("link", rel="canonical")
                 if canonical and canonical.get("href"):
                     lineage = normalize_url(urljoin(final_url, canonical["href"]))
@@ -72,13 +84,18 @@ class WebReader:
                 quality_reason=assessment.reason,
                 evidence_level=min(4, assessment.evidence_level),
                 credibility_score=assessment.credibility_score,
+                authors=bibliography["authors"],
+                published_date=bibliography["published_date"],
+                research_identifiers=bibliography["research_identifiers"],
                 metadata={
+                    "bibliography": bibliography,
                     "canonical_url": lineage,
                     "lineage_links": lineage_links,
                     "bytes": len(body),
                     "content_type": content_type,
                 },
             )
+            doc = classify_document(doc, self.quality_classifier)
         except Exception as exc:
             if budget:
                 await budget.finish(batch, error=type(exc).__name__)

@@ -19,8 +19,18 @@ from autodidact.embeddings import EmbeddingProvider, build_embedding_provider
 from autodidact.enums import GoalSource, GoalStatus
 from autodidact.goals.generator import GoalGenerator
 from autodidact.goals.scorer import goal_score
+from autodidact.knowledge.bibliography import BIBLIOGRAPHY_PROTOCOL
 from autodidact.knowledge.claim_support import ClaimSupportValidator
 from autodidact.knowledge.conflicts import ConflictDetector
+from autodidact.knowledge.content_quality import (
+    CONTENT_QUALITY_PROTOCOL,
+    effective_source_assessment,
+)
+from autodidact.knowledge.decomposition import (
+    DECOMPOSITION_PROTOCOL,
+    ClaimDecomposer,
+    eligible_claim,
+)
 from autodidact.knowledge.investigation import DisputeInvestigator
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import normalize_url
@@ -101,6 +111,7 @@ class AutonomousLearner:
         self.claim_support = ClaimSupportValidator()
 
         self.support_assessor = ClaimSupportAssessor(llm)
+        self.decomposer = ClaimDecomposer(llm)
 
     # 功能：混合召回与候选主张相关的非撤回旧信念，作为冲突比较对象，并缓存本尝试的召回结果。
     async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
@@ -120,6 +131,9 @@ class AutonomousLearner:
         value = {
             "protocol": PROTOCOL,
             "claim_support_protocol": SUPPORT_PROTOCOL,
+            "decomposition_protocol": DECOMPOSITION_PROTOCOL,
+            "content_quality_protocol": CONTENT_QUALITY_PROTOCOL,
+            "bibliography_protocol": BIBLIOGRAPHY_PROTOCOL,
             "config": self.cfg.model_dump(mode="json"),
             "learner": [self.llm.provider_name, self.llm.model_name, settings.llm_base_url],
             "judge": [
@@ -160,7 +174,6 @@ class AutonomousLearner:
             service = WebModelService(self.engine)
             for provider in enabled[:2]:
                 try:
-
                     # 功能：请求一个已启用网页模型的规划建议；它仍是等级 0 观察而非事实证据。
                     async def ask(provider=provider):
                         answer = await service.ask(provider, goal.title, goal_id=str(goal.id))
@@ -427,6 +440,16 @@ class AutonomousLearner:
                             evidence_level=source.evidence_level,
                             credibility_score=source.credibility_score,
                             lineage_key=(source.metadata_json or {}).get("lineage_key", ""),
+                            metadata=source.metadata_json or {},
+                            authors=(source.metadata_json or {})
+                            .get("bibliography", {})
+                            .get("authors", []),
+                            published_date=(source.metadata_json or {})
+                            .get("bibliography", {})
+                            .get("published_date", ""),
+                            research_identifiers=(source.metadata_json or {})
+                            .get("bibliography", {})
+                            .get("research_identifiers", []),
                         )
                     )
                     stored_sources[normalize_url(source.url)] = source
@@ -491,17 +514,23 @@ class AutonomousLearner:
         )
 
         claim_rows = []
+        atomic_drafts = []
         seen_claim_ids = set()
         for draft in learned.claims:
-            validation = self.claim_support.validate(draft, stored_sources)
-            assessment = await self.support_assessor.assess(draft, validation, stored_sources)
-            source_ids = assessment.supported_source_ids
-            claim = await self.repo.add_claim(draft, learning_session.id, source_ids)
-            await self.repo.record_claim_evidence(claim, assessment.records)
-            await self._index_entity("claim", claim)
-            if claim.id not in seen_claim_ids:
-                claim_rows.append(claim)
-                seen_claim_ids.add(claim.id)
+            for claim, candidate in await self.decomposer.persist(
+                self.repo, draft, learning_session.id
+            ):
+                validation = self.claim_support.validate(candidate, stored_sources)
+                assessment = await self.support_assessor.assess(
+                    candidate, validation, stored_sources
+                )
+                await self.repo.record_claim_evidence(claim, assessment.records)
+                await self._index_entity("claim", claim)
+                if claim.id not in seen_claim_ids:
+                    claim_rows.append(claim)
+                    seen_claim_ids.add(claim.id)
+                    if eligible_claim(claim):
+                        atomic_drafts.append(candidate)
 
         # Conflict detection happens before belief promotion. New model output cannot overwrite old beliefs.
         self.llm.bind(
@@ -553,7 +582,9 @@ class AutonomousLearner:
         self.evaluator.judge.bind(
             goal_id=str(goal.id), session_id=str(learning_session.id), phase="closed_book_judge"
         )
-        evaluation = await self.evaluator.evaluate(goal.title, learned, docs)
+        evaluation = await self.evaluator.evaluate(
+            goal.title, learned.model_copy(update={"claims": atomic_drafts}), docs
+        )
         await self.repo.save_evaluation(goal.id, learning_session.id, evaluation)
 
         await self.repo.update_goal_status(goal, GoalStatus.REFLECTING, attempt=learning_session)
@@ -563,6 +594,8 @@ class AutonomousLearner:
         beliefs_promoted = 0
         if evaluation.passed:
             for claim in claim_rows:
+                if not eligible_claim(claim):
+                    continue
                 source_by_id = {str(source.id): source for source in stored_sources.values()}
                 evidence_sources = await self.repo.lineage.evidence_sources(
                     [
@@ -606,11 +639,14 @@ class AutonomousLearner:
                 for source_id in dict.fromkeys(claim.source_ids):
                     source = source_by_id.get(source_id)
                     if source:
+                        quality = effective_source_assessment(source)
+                        if quality.evidence_level <= 0:
+                            continue
                         await self.repo.add_evidence(
                             belief.id,
                             source.id,
-                            source.evidence_level,
-                            strength=min(1.0, claim.confidence),
+                            quality.evidence_level,
+                            strength=min(quality.credibility_score, claim.confidence),
                             excerpt=await self.repo.supported_excerpt(claim.id, source.id),
                         )
             await self.repo.update_goal_status(

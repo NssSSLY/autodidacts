@@ -123,3 +123,33 @@ async def test_concurrent_claim_uniqueness_and_pgvector_recall(postgres_engine):
         await session.commit()
         recalled = await Repository(session).semantic_beliefs([1.0] + [0.0] * 1535)
         assert [item.id for item in recalled] == [belief.id]
+
+
+# 功能：在显式隔离库验证0006主张原文/范围/置信保留，0007旧结构审计默认为未知空对象。
+@pytest.mark.asyncio
+async def test_scope_upgrade_preserves_claim_and_defaults_structure(postgres_engine):
+    config = alembic_config()
+
+    # 功能：在测试连接创建0006旧版本，不触及日常学习库。
+    def build_scope(connection):
+        config.attributes["connection"] = connection
+        command.upgrade(config, "20261003_0006")
+
+    claim_id = uuid4()
+    async with postgres_engine.begin() as connection:
+        await connection.run_sync(build_scope)
+        await connection.execute(
+            text(
+                "INSERT INTO claims (id, statement, confidence, source_ids, scope) VALUES (:id, '保留的旧主张', 0.8, '[]'::jsonb, '{}'::jsonb)"
+            ),
+            {"id": claim_id},
+        )
+    await upgrade_database(postgres_engine)
+    async with postgres_engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text("SELECT statement, confidence, scope, structure FROM claims WHERE id=:id"),
+                {"id": claim_id},
+            )
+        ).one()
+    assert tuple(row) == ("保留的旧主张", 0.8, {}, {})

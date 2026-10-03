@@ -117,6 +117,7 @@ class Claim(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     source_ids: Mapped[list] = mapped_column(JSONB, default=list)
     scope: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    structure: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

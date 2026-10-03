@@ -125,6 +125,10 @@ class MockLLM(LLM):
             return schema.model_validate(
                 {"outcome": "unresolved", "rationale": "Mock 不作真实决议"}
             )
+        if name == "DecompositionProposal":
+            return schema.model_validate(
+                {"kind": "uncertain", "parts": [], "reason": "Mock 不认证主张结构"}
+            )
         raise RuntimeError(f"MockLLM has no fixture for schema {name}")
 
 

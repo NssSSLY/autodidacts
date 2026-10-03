@@ -1,6 +1,7 @@
 # 文件职责：读取有大小/页数限制的 UTF-8 TXT/MD 或可选 PDF，导入不直接提升信念。
 from pathlib import Path
 
+from autodidact.knowledge.content_quality import classify_document
 from autodidact.schemas import SourceDocument
 
 
@@ -32,20 +33,22 @@ def read_local_document(path: str):
     if not content.strip():
         raise ValueError("文档没有可提取文本；扫描PDF需要先进行OCR")
     # Import is provenance, not a declaration that the local document is authoritative.
-    return SourceDocument(
-        url=source.as_uri(),
-        normalized_url=source.as_uri(),
-        lineage_key=source.as_uri(),
-        title=source.name,
-        text=content[:200000],
-        source_type="local_document",
-        quality_class="unreviewed_local_document",
-        evidence_level=1,
-        credibility_score=0.3,
-        quality_reason="用户导入，尚未独立评审或核源",
-        metadata={
-            "local_path": str(source),
-            "page_count": len(pages),
-            "text_truncated": len(content) > 200000,
-        },
+    return classify_document(
+        SourceDocument(
+            url=source.as_uri(),
+            normalized_url=source.as_uri(),
+            lineage_key=source.as_uri(),
+            title=source.name,
+            text=content[:200000],
+            source_type="local_document",
+            quality_class="unreviewed_local_document",
+            evidence_level=1,
+            credibility_score=0.3,
+            quality_reason="用户导入，尚未独立评审或核源",
+            metadata={
+                "local_path": str(source),
+                "page_count": len(pages),
+                "text_truncated": len(content) > 200000,
+            },
+        )
     )

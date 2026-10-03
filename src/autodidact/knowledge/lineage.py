@@ -235,8 +235,10 @@ class SourceLineage:
             result[seed] = frozenset(component)
         return result
 
-    # 功能：把 Source 实体及依赖键转换成 EvidenceSource，供晋升与决议独立性计算。
+    # 功能：把Source及依赖键转换成EvidenceSource，按正文上限只降不升旧等级，供晋升/决议门控。
     async def evidence_sources(self, rows):
+        from autodidact.knowledge.content_quality import effective_source_assessment
+
         urls = [s.normalized_url or s.url for s in rows]
         urls += [(s.metadata_json or {}).get("lineage_key", "") for s in rows]
         keys = await self.dependency_keys(urls)
@@ -249,8 +251,8 @@ class SourceLineage:
                 lineage_key=(s.metadata_json or {}).get("lineage_key", ""),
                 dependency_keys=keys.get(normalize_url(s.url), frozenset())
                 | keys.get((s.metadata_json or {}).get("lineage_key", ""), frozenset()),
-                evidence_level=s.evidence_level,
-                credibility_score=s.credibility_score,
+                evidence_level=quality.evidence_level,
+                credibility_score=quality.credibility_score,
             )
-            for s in rows
+            for s, quality in ((s, effective_source_assessment(s)) for s in rows)
         ]

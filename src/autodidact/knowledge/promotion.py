@@ -33,7 +33,7 @@ class BeliefPromotionPolicy:
         self.min_independent_sources_for_verified = min_independent_sources_for_verified
         self.min_evidence_level_for_verified = min_evidence_level_for_verified
 
-    # 功能：评估失败/开放争议/无证据时拒绝晋升；合格独立证据不足仅允许非 verified 状态。
+    # 功能：评估失败/开放争议/无正等级证据时拒绝晋升；等级0观察不可供事实晋升，合格独立证据不足仅为暂定。
     def decide(
         self,
         *,
@@ -59,7 +59,9 @@ class BeliefPromotionPolicy:
                 )
                 for source_id in (source_ids or [])
             ]
-        independent = independent_source_representatives(sources)
+        independent = independent_source_representatives(
+            [source for source in sources if source.evidence_level > 0]
+        )
         if not independent:
             return PromotionDecision(False, False, "missing_traceable_evidence")
 

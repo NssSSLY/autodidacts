@@ -25,6 +25,17 @@ class SourceDocument(BaseModel):
     quality_reason: str = ""
     evidence_level: int = Field(default=1, ge=0, le=5)
     credibility_score: float = Field(default=0.3, ge=0, le=1)
+    # 书目字段是网页/文档声明，不代表作者身份或研究已获认证。
+    authors: list[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=300)]
+    ] = Field(default_factory=list, max_length=30)
+    published_date: str = Field(default="", max_length=100)
+    research_identifiers: list[ResearchIdentifier] = Field(default_factory=list, max_length=30)
+
+
+class ResearchIdentifier(BaseModel):
+    kind: Literal["doi", "arxiv", "pmid"]
+    value: str = Field(min_length=1, max_length=300)
 
 
 ScopeText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]

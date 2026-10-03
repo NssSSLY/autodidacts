@@ -1,4 +1,4 @@
-# 文件职责：注册主张范围/引文审计、三实体检索、来源血缘回填和持久会话检查/恢复 CLI。
+# 文件职责：注册主张/来源书目质量审计、三实体检索、来源血缘回填和持久会话检查/恢复CLI。
 """来源血缘、持久检查点与混合检索的人工可见入口。"""
 
 from __future__ import annotations
@@ -23,6 +23,15 @@ from autodidact.schemas import SourceDocument
 
 # 功能：注册主张审计、检索、血缘和续跑维护命令，不在注册时连接外部服务。
 def register_advanced_commands(app):
+    # 功能：显示来源作者/日期/研究标识的声明出处及内容质量审计，不触发联网或模型调用。
+    @app.command("show-source")
+    def show_source(source_id: UUID):
+        # 功能：在受控数据库会话读取来源审计，缺失字段保持未知。
+        async def action(repo, llm):
+            return await repo.source_audit(source_id)
+
+        print(asyncio.run(controlled(action)))
+
     # 功能：显示已有主张的范围及原文核验审计，不触发新学习或模型调用。
     @app.command("show-claim")
     def show_claim(claim_id: UUID, limit: int = typer.Option(20, min=1, max=100)):
