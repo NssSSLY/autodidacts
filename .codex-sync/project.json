@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "project_id": "589d84fe-5a7c-4886-8837-618fbf7be86c",
+  "project_name": "autodidact_v0_1",
+  "repository": "https://github.com/NssSSLY/autodidacts.git",
+  "repository_root": ".",
+  "default_branch": "main",
+  "created_at": "2026-10-08T15:06:54+00:00",
+  "updated_at": "2026-10-08T15:06:56+00:00"
+}

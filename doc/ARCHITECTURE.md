@@ -366,3 +366,7 @@ compare-models与scheduled_benchmarks复用完整payload/训练检查，完整�
 metrics/memory/reporting的日常Evaluation按协议/公式/学习模型/裁判分别汇总；混合版本平均为空。Profile冻结基准按comparison_key+model_identity分域，仅完整结果计分；legacy单独标识，不当可靠真值，不同条件多组时总benchmark_score为空，分组统计保留。旧缺版本记录标legacy/unknown，不追溯赋新公式。报告/保持/重评分可在F05报告浏览器审计，但审核原文/答案可被查看，私有题保密需用户另行管理。
 
 升级须停旧进程；新程序双读，旧程序不能消费新可靠快照。旧未完成会话的评分签名不同需人工restart保留历史，无schema降级或自动认知回填。当前108个Python文件/642个函数方法中文说明无缺失，F03重点46通过/1数据库跳过，完整219通过/7跳过、编译/Ruff通过；未运行真实数据库、专家题库/模型、真实延时或30天实验。回退与旧状态影响见 [迁移说明](../migrations/README.md#5-f03评估协议兼容迁移无新revision)。
+
+## 16. Codex 开发辅助工具（2026-10-08）
+
+`tools/codex-sync/` 为独立开发工具，不进入 Autodidact 运行链或数据库迁移。`codex-sync.ps1` 是 Windows 启动入口，`install-codex-sync.ps1` 安装命令和 Skill；`src/codex_sync/` 中 project 管理身份与初始化、git 读取元数据和检查同步、checkpoint 记录明确提供的上下文、resume/status 输出恢复与状态、cli 分发命令、adapters 接收提供的文字；templates 是中文文档模板，skills 是 Skill 源文件，tests 是工具回归。`.codex-sync/` 保存本项目长期摘要、检查点及历史；根 `AGENTS.md` 引导新聊天读取这些文件，再遵循 doc/AGENTS.md。工具不读取真实配置或学习数据库。

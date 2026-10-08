@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-project-continuity"
+version = "2.0.0"
+description = "Portable Git-backed project context for Codex"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+codex-sync = "codex_sync.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
