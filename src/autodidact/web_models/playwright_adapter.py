@@ -41,6 +41,9 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
                 )
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 await page.goto(self.config.url, wait_until="domcontentloaded")
+                from autodidact.provider_runtime import reject_challenge
+
+                reject_challenge(await page.content())
                 ok = await page.locator(self.config.input_selector).count() > 0
                 await ctx.close()
                 return ok

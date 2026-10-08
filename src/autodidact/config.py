@@ -93,11 +93,21 @@ class SafetyConfig(BaseModel):
     allow_captcha_bypass: bool = False
 
 
+class ProviderPolicy(BaseModel):
+    max_attempts: int = Field(default=3, ge=1, le=5)
+    retry_base_seconds: float = Field(default=0.5, ge=0, le=5)
+    retry_max_seconds: float = Field(default=8, ge=1, le=30)
+    circuit_failure_threshold: int = Field(default=3, ge=1, le=10)
+    circuit_cooldown_seconds: float = Field(default=60, ge=1, le=3600)
+    attempt_timeout_seconds: float = Field(default=150, ge=1, le=300)
+
+
 class AgentConfig(BaseModel):
     agent: AgentIdentityConfig
     learning: LearningConfig = Field(default_factory=LearningConfig)
     source_policy: SourcePolicyConfig = Field(default_factory=SourcePolicyConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    providers: ProviderPolicy = Field(default_factory=ProviderPolicy)
 
 
 # 功能：缓存运行配置读取结果，供提供方与数据库使用统一环境设置。

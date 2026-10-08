@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -50,6 +51,7 @@ class OperationBudget:
 
     # 功能：建立独立账本会话工厂，从学习配置读取每日资源上限。
     def __init__(self, engine):
+        self.engine = engine
         self.sessions = async_sessionmaker(engine, expire_on_commit=False)
         cfg = agent_config().learning
         self.limits = {
@@ -132,18 +134,53 @@ class OperationBudget:
 
 
 class BudgetedSearch:
-    # 功能：给搜索提供方附加预算账本，不改变其查询协议。
+    # 功能：逐叶搜索提供方附加预算和持久健康控制，降级链不重复预留总费用。
     def __init__(self, inner, budget: OperationBudget):
+        from autodidact.provider_runtime import ProviderIdentity, ProviderRuntime
+        from autodidact.tools.search import FallbackSearchProvider
+
         self.inner, self.budget = inner, budget
         self.provider_name = inner.provider_name
+        if isinstance(inner, FallbackSearchProvider):
+            self.inner = FallbackSearchProvider(
+                [BudgetedSearch(p, budget) for p in inner.providers]
+            )
+            self.runtime = None
+        else:
+            self.runtime = ProviderRuntime(getattr(budget, "engine", None))
+            self.identity = ProviderIdentity(
+                "search",
+                inner.provider_name,
+                getattr(inner, "base_url", "https://html.duckduckgo.com/html/"),
+                credential=getattr(inner, "api_key", ""),
+            )
 
-    # 功能：先预留一次搜索，再调用并记录结果数量或错误；失败仍留下审计事件。
+    # 功能：每次物理尝试先熔断准入再预留搜索预算；降级后的请求和重试分别入账。
     async def search(self, query: str, limit: int = 5):
-        batch = await self.budget.reserve({"searches": 1}, {"query": query[:500]})
+        if self.runtime is None:
+            return await self.inner.search(query, limit)
+
+        # 功能：绑定单次受预算搜索与统一尝试上下文。
+        async def invoke(context):
+            return await self._attempt(query, limit, context)
+
+        return await self.runtime.run(self.identity, invoke)
+
+    # 功能：预留单提供方一次请求并记录结果或取消，错误仅存类型及安全分类。
+    async def _attempt(self, query, limit, context):
+        from autodidact.provider_runtime import classify_failure
+
+        batch = await self.budget.reserve(
+            {"searches": 1}, {"query": query[:500], "provider": self.provider_name, **context}
+        )
         try:
             hits = await self.inner.search(query, limit)
-        except Exception as exc:
-            await self.budget.finish(batch, error=type(exc).__name__)
+        except (Exception, asyncio.CancelledError) as exc:
+            await self.budget.finish(
+                batch,
+                error=type(exc).__name__,
+                details={"failure_category": classify_failure(exc).category},
+            )
             raise
         await self.budget.finish(batch, details={"result_count": len(hits)})
         return hits

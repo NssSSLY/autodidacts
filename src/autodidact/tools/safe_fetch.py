@@ -11,6 +11,10 @@ import httpx
 from autodidact.config import agent_config, runtime_settings
 
 
+class SourceRejected(ValueError):
+    category = "unsafe_source"
+
+
 # 功能：校验 URL 无凭据、端口合法且全部解析地址为公网，返回原解析结果和固定 IP 请求 URL。
 async def public_address(url: str):
     parsed = urlsplit(url)
@@ -20,16 +24,16 @@ async def public_address(url: str):
         or parsed.username
         or parsed.password
     ):
-        raise ValueError("只允许无凭据的 HTTP(S) 公网来源")
+        raise SourceRejected("只允许无凭据的 HTTP(S) 公网来源")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     if port not in {80, 443}:
-        raise ValueError("来源端口必须是 80 或 443")
+        raise SourceRejected("来源端口必须是 80 或 443")
     records = await asyncio.get_running_loop().getaddrinfo(
         parsed.hostname, port, type=socket.SOCK_STREAM
     )
     addresses = list(dict.fromkeys(item[4][0] for item in records))
     if not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
-        raise ValueError("来源解析到了非公网地址")
+        raise SourceRejected("来源解析到了非公网地址")
     address = addresses[0]
     literal = f"[{address}]" if ":" in address else address
     pinned = urlunsplit((parsed.scheme, f"{literal}:{port}", parsed.path or "/", parsed.query, ""))
@@ -57,24 +61,24 @@ async def fetch_public(url: str):
                 if response.status_code in {301, 302, 303, 307, 308}:
                     location = response.headers.get("location")
                     if not location or hop == cfg.max_redirects:
-                        raise ValueError("无效重定向或重定向过多")
+                        raise SourceRejected("无效重定向或重定向过多")
                     current = urljoin(current, location)
                     continue
                 response.raise_for_status()
                 length = response.headers.get("content-length")
                 if length and int(length) > cfg.max_response_bytes:
-                    raise ValueError("来源响应超出大小限制")
+                    raise SourceRejected("来源响应超出大小限制")
                 if response.headers.get("content-encoding", "identity").lower() not in {
                     "",
                     "identity",
                 }:
-                    raise ValueError("来源忽略了 identity 编码要求，暂不接收压缩响应")
+                    raise SourceRejected("来源忽略了 identity 编码要求，暂不接收压缩响应")
                 body = bytearray()
                 async for chunk in response.aiter_raw():
                     if len(body) + len(chunk) > cfg.max_response_bytes:
-                        raise ValueError("来源响应超出大小限制")
+                        raise SourceRejected("来源响应超出大小限制")
                     body.extend(chunk)
                 return current, response.headers, bytes(body), response.encoding or "utf-8"
             finally:
                 await response.aclose()
-    raise ValueError("重定向过多")
+    raise SourceRejected("重定向过多")

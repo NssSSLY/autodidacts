@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from autodidact import models
 from autodidact.learning.ground_truth import evaluation_groups
+from autodidact.provider_runtime import provider_health
 
 
 # 功能：统计目标/信念/争议与按版本模型分组的评估；多组时总均值未知，不混算历史评分。
@@ -41,6 +42,7 @@ async def dashboard(session: AsyncSession) -> dict:
         "verified_beliefs_rate": verified / total_beliefs if total_beliefs else 0.0,
         "average_evaluation_score": avg_eval,
         "evaluation_score_groups": score_groups,
+        "provider_health": await provider_health(session, 20),
         "open_disputes": (
             await session.execute(
                 select(func.count())

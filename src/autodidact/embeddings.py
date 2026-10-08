@@ -15,6 +15,8 @@ EMBEDDING_DIMENSION = 1536
 class EmbeddingUnavailable(RuntimeError):
     """Raised when semantic retrieval is intentionally unavailable or fails."""
 
+    category = "invalid_response"
+
 
 class EmbeddingProvider(ABC):
     dimension: int = EMBEDDING_DIMENSION

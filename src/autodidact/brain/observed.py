@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import math
 import time
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -11,7 +13,23 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from autodidact import models
 from autodidact.brain.llm import LLM
 from autodidact.config import runtime_settings
+from autodidact.provider_runtime import ProviderIdentity, ProviderRuntime, classify_failure
 from autodidact.runtime import OperationBudget
+
+
+# 功能：仅采用0至一万亿的有限已知usage数值，坏字段保留预算未知预留，避免超大整数溢出掩盖结果。
+def valid_usage(raw):
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        key: value
+        for key, value in raw.items()
+        if key in {"prompt_tokens", "completion_tokens", "total_tokens"}
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and 0 <= value <= 1_000_000_000_000
+        and math.isfinite(value)
+    }
 
 
 class ObservedLLM(LLM):
@@ -23,13 +41,32 @@ class ObservedLLM(LLM):
         self.budget = OperationBudget(engine)
         self.role = role
         self.context: dict = {}
+        self.runtime = ProviderRuntime(engine)
+        self.identity = ProviderIdentity(
+            "llm",
+            self.provider_name,
+            getattr(inner, "base_url", ""),
+            self.model_name,
+            getattr(inner, "api_key", ""),
+        )
 
     # 功能：绑定目标、会话、阶段或实验组上下文以关联后续审计记录。
     def bind(self, **context):
         self.context = context
 
-    # 功能：预留预算、执行模型、在成功/失败后记 usage 与原始输出；保存不等于承认输出为真。
+    # 功能：熔断准入及有界退避包围每次独立计费的模型请求，Mock保持原演示路径。
     async def _call(self, system, user, invoke, schema_name=None):
+        if self.provider_name == "mock":
+            return await self._attempt(system, user, invoke, schema_name, {})
+
+        # 功能：将单次模型尝试关联统一调用ID和尝试号，每次重新计预算与观察。
+        async def attempt(context):
+            return await self._attempt(system, user, invoke, schema_name, context)
+
+        return await self.runtime.run(self.identity, attempt)
+
+    # 功能：预留一次模型调用预算并保存原答复/usage/取消/失败分类，每次重试保留独立账本和等级0观察。
+    async def _attempt(self, system, user, invoke, schema_name, operation_context):
         settings = runtime_settings()
         # UTF-8 bytes are a conservative admission estimate, not reported token usage.
         input_bound = len((system + user).encode("utf-8")) + 256
@@ -45,6 +82,7 @@ class ObservedLLM(LLM):
                 "model": self.model_name,
                 "role": self.role,
                 **self.context,
+                **operation_context,
             },
         )
         started = time.monotonic()
@@ -54,13 +92,14 @@ class ObservedLLM(LLM):
         try:
             result = await invoke()
             response = result.model_dump_json() if schema_name else result
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             error = type(exc).__name__
+            failure_category = classify_failure(exc).category
             raise
         finally:
             if error and not response:
                 response = getattr(self.inner, "last_response", "") or ""
-            usage = getattr(self.inner, "last_usage", {}) or {}
+            usage = valid_usage(getattr(self.inner, "last_usage", {}))
             actual = {"llm_calls": 1}
             if usage.get("total_tokens") is not None:
                 actual["tokens"] = float(usage["total_tokens"])
@@ -81,12 +120,17 @@ class ObservedLLM(LLM):
                 "latency_seconds": time.monotonic() - started,
                 "operation_batch_id": str(batch),
                 **self.context,
+                **operation_context,
+                "failure_category": failure_category if error else None,
             }
             await self.budget.finish(
                 batch,
                 actual=actual,
                 error=error,
-                details={"latency_seconds": metadata["latency_seconds"]},
+                details={
+                    "latency_seconds": metadata["latency_seconds"],
+                    "failure_category": metadata["failure_category"],
+                },
             )
             async with self.sessions() as session, session.begin():
                 session.add(

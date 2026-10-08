@@ -72,6 +72,9 @@ class DuckDuckGoHtmlSearch(SearchProvider):
             response = await client.get(url)
             response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
+        from autodidact.provider_runtime import reject_challenge
+
+        reject_challenge(response.text)
         hits: list[SearchHit] = []
         for result in soup.select(".result"):
             anchor = result.select_one("a.result__a")
@@ -156,15 +159,20 @@ class FallbackSearchProvider(SearchProvider):
     # 功能：依次尝试提供方，返回首个非空结果；全部失败时报告汇总错误，不规避反爬。
     async def search(self, query: str, limit: int = 5) -> list[SearchHit]:
         failures: list[str] = []
+        from autodidact.provider_runtime import classify_failure
+        from autodidact.runtime import BudgetExceeded
+
         for provider in self.providers:
             try:
                 hits = await provider.search(query, limit)
                 if hits:
                     return hits
                 failures.append(f"{provider.provider_name}: no results")
+            except BudgetExceeded:
+                raise
             # Provider/network/parser failures are isolated by design.
             except Exception as exc:  # noqa: BLE001
-                failures.append(f"{provider.provider_name}: {exc}")
+                failures.append(f"{provider.provider_name}: {classify_failure(exc).category}")
         raise SearchProviderError("All search providers failed: " + "; ".join(failures))
 
 

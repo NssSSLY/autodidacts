@@ -45,6 +45,18 @@ async def controlled(action):
 
 # 功能：把增量操作函数注册到 Typer；注册过程不执行实际学习任务。
 def register_commands(app):
+    # 功能：只读查询持久提供方健康，不初始化模型或发送探测请求，要求数据库已初始化。
+    @app.command("provider-health")
+    def provider_health_command(limit: int = 50):
+        from autodidact.provider_runtime import provider_health
+
+        # 功能：在普通只读查询会话中返回有界健康快照，不修改熔断状态。
+        async def read():
+            async with SessionLocal() as session:
+                return await provider_health(session, limit)
+
+        print(asyncio.run(read()))
+
     # 功能：仅校验本地题集/真值与摘要，无数据库/模型操作，供冻结前准备。
     @app.command("check-benchmark")
     def check_benchmark(path: str):

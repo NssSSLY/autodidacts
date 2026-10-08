@@ -166,8 +166,14 @@ class OpenAICompatibleLLM(LLM):
             )
             response.raise_for_status()
             data = response.json()
-        self.last_usage = data.get("usage", {})
-        return data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
+        self.last_usage = usage if isinstance(usage, dict) else {}
+        content = data["choices"][0]["message"]["content"]
+        if not isinstance(content, str) or not content.strip():
+            from autodidact.provider_runtime import ProviderFailure
+
+            raise ProviderFailure("invalid_response")
+        return content
 
 
 # 功能：依据运行配置构造 Mock 或兼容 API 模型，未知提供方拒绝启动。

@@ -97,5 +97,7 @@ async def test_fallback_search_reports_all_provider_failures():
         ]
     )
 
-    with pytest.raises(SearchProviderError, match="one: first; two: second"):
+    with pytest.raises(SearchProviderError, match="one: unexpected; two: unexpected") as caught:
         await provider.search("query")
+    assert "first" not in str(caught.value)
+    assert "second" not in str(caught.value)

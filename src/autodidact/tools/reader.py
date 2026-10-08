@@ -1,7 +1,9 @@
 # 文件职责：安全读取网页、提取正文及质量/血缘 metadata，并可附加网页预算。
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -12,6 +14,13 @@ from autodidact.knowledge.sources import (
     RuleBasedSourceQualityClassifier,
     normalize_url,
     publisher_key,
+)
+from autodidact.provider_runtime import (
+    ProviderFailure,
+    ProviderIdentity,
+    ProviderRuntime,
+    classify_failure,
+    reject_challenge,
 )
 from autodidact.schemas import SourceDocument
 
@@ -28,21 +37,40 @@ class WebReader:
             primary_or_official_level=policy.primary_or_official_level,
             proof_or_experiment_level=policy.proof_or_reproducible_experiment_level,
         )
+        self.runtime = ProviderRuntime()
 
-    # 功能：预算准入后读取公开网页，校验内容类型、提取正文/血缘/质量并记录读取成功或错误。
+    # 功能：按来源入口origin熔断及有界重试；每次尝试仍重新校验公网/重定向并单独计预算。
     async def read(self, url: str) -> SourceDocument:
+        parsed = urlsplit(url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        identity = ProviderIdentity("source", "public_web", origin)
+
+        # 功能：把一次完整安全读取和解析绑定统一调用及尝试标识。
+        async def attempt(context):
+            return await self._attempt(url, context)
+
+        return await self.runtime.run(identity, attempt)
+
+    # 功能：预算准入后单次读取/解析/质量审计，验证码页明确失败；保存失败分类和取消账本。
+    async def _attempt(self, url, context):
         from urllib.parse import urljoin
 
         from autodidact.tools.safe_fetch import fetch_public
 
         budget = getattr(self, "budget", None)
-        batch = await budget.reserve({"web_reads": 1}, {"url": url[:2000]}) if budget else None
+        batch = (
+            await budget.reserve({"web_reads": 1}, {"url": url[:2000], **context})
+            if budget
+            else None
+        )
         try:
             final_url, headers, body, encoding = await fetch_public(url)
             content_type = headers.get("content-type", "").lower()
             if "text/html" not in content_type and "text/plain" not in content_type:
-                raise ValueError(f"Unsupported content type: {content_type}")
+                raise ProviderFailure("unsupported_content")
             decoded = body.decode(encoding, errors="replace")
+            if "text/html" in content_type:
+                reject_challenge(decoded)
             lineage = normalize_url(final_url)
             lineage_links = []
             bibliography = {
@@ -96,9 +124,13 @@ class WebReader:
                 },
             )
             doc = classify_document(doc, self.quality_classifier)
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             if budget:
-                await budget.finish(batch, error=type(exc).__name__)
+                await budget.finish(
+                    batch,
+                    error=type(exc).__name__,
+                    details={"failure_category": classify_failure(exc).category},
+                )
             raise
         if budget:
             await budget.finish(batch)
@@ -109,6 +141,7 @@ class WebReader:
         from autodidact.runtime import OperationBudget
 
         self.budget = OperationBudget(engine)
+        self.runtime = ProviderRuntime(engine)
         return self
 
     # 功能：对提取文本求 SHA-256，作为来源内容去重键。

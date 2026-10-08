@@ -34,6 +34,14 @@ learning:
   memory_review_days: 30
   auto_consolidate_memory: true
 
+providers:
+  max_attempts: 3
+  retry_base_seconds: 0.5
+  retry_max_seconds: 8
+  circuit_failure_threshold: 3
+  circuit_cooldown_seconds: 60
+  attempt_timeout_seconds: 150
+
 source_policy:
   model_output_evidence_level: 0
   ordinary_web_evidence_level: 1

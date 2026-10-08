@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-04；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计及F03可靠真值/版本评估，schema HEAD仍为20261003_0008。技术/约束/开发入口已移入doc/，不留根目录副本。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-08；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性，schema HEAD仍为20261003_0008。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -24,7 +24,8 @@ CLI / 本地 Workbench
       └─ 晋升门控 → Belief/Evidence/History → 反思/后续目标
           └─ 日记忆报告 / 候选技能 / 可选里程碑基准
 
-外部调用 → OperationBudget(OperationEvent) + ModelObservation
+外部调用 → ProviderRuntime(熔断准入/有界退避) → 每次OperationBudget + ModelObservation
+运行健康 → ResearchReport(kind=provider_health，可变快照，与冻结评估报告隔离)
 数据库 → PostgreSQL + JSONB + pgvector；Alembic 维护结构
 ```
 
@@ -32,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引覆盖仓库自己维护的 **108 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
+以下逐文件索引覆盖业务 src/migrations/scripts/tests 中的 **111 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。独立开发辅助工具 tools/codex-sync 单列第16节及自身架构，不纳入业务计数。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
 
-每个 Python 文件首部有中文“文件职责”；全部 **642 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后F01/F02/F05/F03是明确功能增量，见第11–15节。数据模型自动生成的方法不在手工函数计数中。
+每个业务 Python 文件首部有中文“文件职责”；全部 **718 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后F01/F02/F05/F03/F06是明确功能增量，见第11–15/17节。数据模型自动生成的方法不在手工函数计数中。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -59,6 +60,7 @@ CLI / 本地 Workbench
 | [src/autodidact/migrations.py](../src/autodidact/migrations.py) | 识别已知旧库结构并串行 Alembic 升级，拒绝不完整或未知状态的自动 stamp。 | `alembic_config`、`expected_schema_columns`、`baseline_schema_columns`、`operational_schema_columns`、其余见代码内注释 |
 | [src/autodidact/models.py](../src/autodidact/models.py) | 定义 19 个持久业务表、外键、唯一约束和向量字段。 | `uuid_pk` |
 | [src/autodidact/normalization.py](../src/autodidact/normalization.py) | 集中规范文本与计算稳定摘要，统一目标去重和认识论幂等键。 | `normalize_text_key`、`stable_key`、`claim_statement_key` |
+| [src/autodidact/provider_runtime.py](../src/autodidact/provider_runtime.py) | F06统一失败分类、退避/Retry-After/限时、持久熔断/单探针租约与脱敏健康查询，不改认知信度。 | `ProviderRuntime.run`、`acquire`、`finish`、`HealthStore.edit`、`classify_failure`、`provider_health` |
 | [src/autodidact/reporting.py](../src/autodidact/reporting.py) | 汇总指定时间窗的闭卷趋势、资源用量、错误及冻结实验报告。 | `longitudinal_report` |
 | [src/autodidact/repository.py](../src/autodidact/repository.py) | 封装认知数据库读写及事务：目标、来源、主张锚点、信念、争议、历史和评估。 | `_expected_unique_violation`、`Repository.get_or_create_agent`、`Repository.add_goal`、`Repository.add_goal_if_absent`、其余见代码内注释 |
 | [src/autodidact/research.py](../src/autodidact/research.py) | 复用研究收集路径，供学习、独立核验与争议调查取得可读且去重的资料。 | `ResearchCollector.fetch`、`ResearchCollector.filter_independent` |
@@ -155,6 +157,8 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [tests/test_audit_postgres.py](../tests/test_audit_postgres.py) | 显式*_test随机schema验证Source/撤回信念的真实审计查询及READ ONLY强制拒写；缺配置跳过。 | `test_audit_database_enforces_read_only` |
+| [tests/test_provider_runtime.py](../tests/test_provider_runtime.py) | F06离线HTTP/时钟/预算/模型替身验证退避、分类、单探针/旧响应、取消、逐次费用、验证页与网页不重复提交。 | 测试及替身职责见中文注释 |
+| [tests/test_provider_postgres.py](../tests/test_provider_postgres.py) | 显式*_test随机schema检查健康快照跨实例、事务锁/唯一探针及旧信念保留；缺配置跳过。 | `test_health_persistence_single_probe_and_old_belief` |
 | [tests/test_reliable_evaluation.py](../tests/test_reliable_evaluation.py) | 离线替身检查真值/版本/hash、答案不泄漏、训练重合、unknown/成对门控、保持/重评分、技能声明与实际统计消费者分组。 | 测试函数及替身职责见文件内中文说明 |
 | [tests/test_reliable_postgres.py](../tests/test_reliable_postgres.py) | 显式*_test随机schema检查0008旧JSONB/信念保留、新可靠版本幂等与实际训练查询；缺配置跳过。 | `test_reliable_protocol_preserves_legacy_reports` |
 | [tests/test_workbench_audit.py](../tests/test_workbench_audit.py) | 无写会话/SQL形状及真实回环HTTP替身验证六类列表、原文/历史/四结果、参数/预算/访问安全。 | `ReadSession`、`test_dispatch_read_only_transaction`、`test_http_protection_and_safe_errors`及文件内注释 |
@@ -370,3 +374,19 @@ metrics/memory/reporting的日常Evaluation按协议/公式/学习模型/裁判�
 ## 16. Codex 开发辅助工具（2026-10-08）
 
 `tools/codex-sync/` 为独立开发工具，不进入 Autodidact 运行链或数据库迁移。`codex-sync.ps1` 是 Windows 启动入口，`install-codex-sync.ps1` 安装命令和 Skill；`src/codex_sync/` 中 project 管理身份与初始化、git 读取元数据和检查同步、checkpoint 记录明确提供的上下文、resume/status 输出恢复与状态、cli 分发命令、adapters 接收提供的文字；templates 是中文文档模板，skills 是 Skill 源文件，tests 是工具回归。`.codex-sync/` 保存本项目长期摘要、检查点及历史；根 `AGENTS.md` 引导新聊天读取这些文件，再遵循 doc/AGENTS.md。工具不读取真实配置或学习数据库。
+
+## 17. F06：来源与提供方运营可靠性
+
+控制链：受预算搜索/ObservedLLM/RecordedEmbedding/WebReader/WebModelService → ProviderRuntime.acquire → 每次预算预留 → 一次适配器调用与审计结算 → ProviderRuntime.finish → 必要时有界退避。搜索Fallback的每个叶子单独包裹，不再为链路只预留一次；预算拒绝不降级绕过，熔断阻断不发请求或计调用预算，外部取消原样传播。API可能已处理后超时，重试非exactly-once；网页提交 retry_safe=False，最多一次。
+
+身份以kind/provider/完整endpoint/model/credential做SHA256；不同角色的同模型同配置共用健康，来源按初始origin隔离，重定向仍逐跳安全校验但不逐跳健康计数。健康JSON仅保存安全标签/主机/分类/计数/时延，不存凭据、端点路径/query或错误原文。已有操作审计仍可能含研究文本/URL，需要按既有隐私权限管理；不宣称整库已自动脱敏。Mock和disabled嵌入保留演示/关键词路径，原始适配器不是统一运行器。
+
+HealthStore独立事务修改research_reports(kind=provider_health,report_key=身份摘要,payload.protocol=provider_health_v1)，复用既有唯一键，每身份60位advisory事务锁；不使用冻结报告的save_report不可变写法，不在外部网络等待期间持有锁。无DB的独立工具实例仅有该Store内存状态；生产受预算入口绑定同一DB。无新revision/表/列，旧认知/冻结评估/成功工作项不回填。
+
+closed允许请求；连续失败达到阈值、401/403/明确挑战或Retry-After开启open。冷却后下一次真实调用独占half_open探针，租约为尝试限时+5秒；探针成功关闭，失败/取消释放并再冷却，租约过期可重领。generation+probe_id保护迟到响应不能关闭新熔断；进程崩溃等待租约而非永久占用。正常成功重置连续失败；404/不安全来源/不支持类型/预算/取消不将闭合来源判为失效。数据库健康/预算写入失败不改为无审计请求，需修复数据库自身。
+
+统一分类：connection/timeout/rate_limit/upstream/authentication/forbidden/access_challenge/not_found/request_rejected/invalid_response/unsafe_source/unsupported_content/unexpected/budget/cancelled/circuit_open。408/425/429/500/502/503/504、连接/超时可有限重试；格式/鉴权/封锁/安全拒绝不自动重试。Retry-After合法秒数/UTC日期解析有界至7天，短等待遵守，超过retry_max结束本逻辑调用；指数退避加抖动，最大attempts含首次。明确挑战标题/Cloudflare标记拒绝，普通正文讨论验证码不会因此阻断；不是所有反爬形式检测器，也不规避验证。
+
+provider-health只读查询1–100，status/workbench状态查询20，F05报告按kind查看；冷却到期只计算probe_available，不主动发请求、不改认知。快照更新、逐次OperationEvent/ModelObservation追加，两者不能混当冻结报告。查询按记录创建时间有界取近期身份，不是所有身份或最近失败的全库排序看板。配置范围见02；无人工重置、主动告警或自动提供方切换。
+
+实际证明：新增32项离线回归、完整251通过/8数据库跳过，编译/Ruff/CLI帮助通过；111个业务Python文件/718个显式方法中文说明无缺失。新增跨实例/单探针/旧信念实库用例未配置而跳过，不证明真实多进程、真实429/封锁、重启或长期运营。旧状态兼容、升级和回退见 [迁移说明](../migrations/README.md#6-f06配置与健康状态兼容无新revision)，验收见V17；F04/F07未开发。
