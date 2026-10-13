@@ -22,6 +22,7 @@ class RecordedEmbedding:
         identity = f"{type(inner).__name__}:{getattr(inner, 'base_url', '')}:{getattr(inner, 'model', '')}:{inner.dimension}"
         self.fingerprint = hashlib.sha256(identity.encode()).hexdigest()
         self.runtime = ProviderRuntime(engine)
+        self.context = {}
         self.identity = ProviderIdentity(
             "embedding",
             type(inner).__name__,
@@ -30,8 +31,13 @@ class RecordedEmbedding:
             getattr(inner, "api_key", ""),
         )
 
+    # 功能：关联索引任务/实体上下文到逐尝试预算和等级0观察，不改变提供方或向量指纹。
+    def bind(self, **context):
+        self.context = context
+
     # 功能：关闭嵌入保持原关键词降级；启用时经持久熔断和有限重试，每次尝试单独预算/审计。
     async def embed(self, text):
+        self.attempts_started = 0
         if isinstance(self.inner, DisabledEmbeddingProvider):
             raise EmbeddingUnavailable("embedding provider is disabled")
 
@@ -45,8 +51,9 @@ class RecordedEmbedding:
     async def _attempt(self, text, context):
         batch = await self.budget.reserve(
             {"embedding_calls": 1, "tokens": len(text.encode()) + 256},
-            {"embedding_fingerprint": self.fingerprint, **context},
+            {"embedding_fingerprint": self.fingerprint, **self.context, **context},
         )
+        self.attempts_started += 1
         error, summary = None, {}
         try:
             vector = await self.inner.embed(text)
@@ -77,6 +84,7 @@ class RecordedEmbedding:
                             "evidence_level": 0,
                             "error": error,
                             "fingerprint": self.fingerprint,
+                            **self.context,
                             "failure_category": failure_category if error else None,
                             **context,
                         },

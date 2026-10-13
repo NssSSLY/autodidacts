@@ -1,4 +1,4 @@
-# 文件职责：定义 19 个持久业务表、外键、唯一约束和向量字段。
+# 文件职责：定义 20 个持久业务表、外键、唯一约束和向量字段。
 from __future__ import annotations
 
 from datetime import datetime
@@ -363,3 +363,23 @@ class RetrievalEntry(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class RetrievalVector(Base):
+    __tablename__ = "retrieval_vectors"
+    __table_args__ = (
+        UniqueConstraint("generation_id", "entity_kind", "entity_id", name="uq_retrieval_vector_item"),
+        Index("ix_retrieval_vector_work", "generation_id", "status"),
+        Index("ix_retrieval_vector_cosine", "embedding", postgresql_using="hnsw",
+              postgresql_ops={"embedding": "vector_cosine_ops"}),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    generation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("research_reports.id"), nullable=False)
+    entity_kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    entity_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    fingerprint: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    error_category: Mapped[str | None] = mapped_column(String(40))

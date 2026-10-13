@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from uuid import UUID
 
 from sqlalchemy import case, exists, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
@@ -232,6 +233,28 @@ class HybridRetriever:
         terms = tokens(query)[:128]
         candidates = {}
         pool = min(200, max(40, limit * 4))
+        # 一次召回只读取一次活动指针，切换期间不同实体类型不会混入不同版本。
+        generation = None
+        if vector is not None:
+            try:
+                async with self.s.begin_nested():
+                    active = await self.s.scalar(
+                        select(models.ResearchReport).where(
+                            models.ResearchReport.kind == "retrieval_active",
+                            models.ResearchReport.report_key == "vectors",
+                        )
+                    )
+                    if active is not None:
+                        state = active.payload
+                        if state.get("protocol") != "retrieval_active_v1":
+                            raise ValueError("未知活动索引协议")
+                        if state.get("generation_id"):
+                            if state.get("fingerprint") != fingerprint:
+                                raise ValueError("活动索引指纹不匹配")
+                            generation = UUID(state["generation_id"])
+            except Exception as exc:  # noqa: BLE001 - 未知指针或不匹配配置只禁用语义通道。
+                log.warning("活动索引查询降级：%s", type(exc).__name__)
+                vector = None
 
         # 功能：合并同实体的各检索通道名次，保留每通道最优排名。
         def collect(kind, channel, rows):
@@ -286,18 +309,35 @@ class HybridRetriever:
             if vector is not None:
                 try:
                     async with self.s.begin_nested():
+                        semantic = joined
+                        vector_column = entry.embedding
+                        conditions = [
+                            entry.embedding.is_not(None),
+                            entry.fingerprint == fingerprint,
+                        ]
+                        if generation:
+                            staged = models.RetrievalVector
+                            semantic = joined.join(
+                                staged,
+                                (staged.entity_id == model.id) & (staged.entity_kind == kind),
+                            )
+                            vector_column = staged.embedding
+                            conditions = [
+                                staged.generation_id == generation,
+                                staged.status == "completed",
+                                staged.embedding.is_not(None),
+                                staged.fingerprint == fingerprint,
+                                staged.content_hash == entry.content_hash,
+                            ]
                         rows = (
                             await self.s.scalars(
-                                joined.where(
-                                    entry.embedding.is_not(None),
-                                    entry.fingerprint == fingerprint,
-                                )
-                                .order_by(entry.embedding.cosine_distance(vector), model.id)
+                                semantic.where(*conditions)
+                                .order_by(vector_column.cosine_distance(vector), model.id)
                                 .limit(pool)
                             )
                         ).all()
                     collect(kind, "semantic", rows)
-                    if kind == "belief":
+                    if kind == "belief" and generation is None:
                         async with self.s.begin_nested():
                             rows = (
                                 await self.s.scalars(

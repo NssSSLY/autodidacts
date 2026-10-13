@@ -22,6 +22,7 @@ from autodidact.db import SessionLocal, engine, init_database
 from autodidact.goals.scorer import goal_score
 from autodidact.metrics import dashboard
 from autodidact.repository import Repository
+from autodidact.retrieval_jobs import job_action
 from autodidact.runtime import controller_lock
 from autodidact.schemas import CandidateGoal
 
@@ -32,6 +33,12 @@ class ResearchAnswer(BaseModel):
     explanation: str = Field(max_length=5000)
     belief_ids: list[str] = Field(default_factory=list, max_length=8)
     missing_knowledge: list[str] = Field(default_factory=list, max_length=5)
+
+
+class IndexJobRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    max_items: int = Field(default=200, ge=1, le=10000)
+    max_attempts: int = Field(default=3, ge=1, le=5)
 
 
 PAGE = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -51,6 +58,7 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <section><h2>围绕已有知识提问</h2><input id="question" placeholder="输入问题"><button id="ask">查看回答与证据</button><pre id="answer"></pre><small>模型解释是待核验建议；保存的信念与引用单独列出。需要新知识时，请创建学习目标。</small></section>
 <section><h2>最近目标</h2><pre id="goals"></pre></section><section><h2>信念与争议</h2><pre id="beliefs"></pre><pre id="disputes"></pre></section>
 <section><h2>研究报告</h2><pre id="reports"></pre></section>
+<section><h2>嵌入重建运营</h2><p>先在配置中启用1536维嵌入服务。创建/查看/校验不请求模型，后台运行会按次计费；批次结束后需明确续跑。暂停等待在途项收尾，启用仅影响召回，不修改信念。</p><div class="row"><button id="index-create">创建候选版本</button><button id="index-refresh">刷新任务</button></div><input id="index-id" placeholder="索引任务 UUID"><div class="row"><button id="index-run">后台运行（最多200项）</button><button id="index-pause">暂停</button><button id="index-resume">恢复排队</button><button id="index-retry">重排失败项</button><button id="index-verify">校验完整性</button><button id="index-activate">启用版本</button><button id="index-legacy">切回旧索引</button></div><pre id="index-status"></pre></section>
 <section id="audit"><h2>认知审计 · 只读</h2><p class="muted">查看已保存的证据链，不调用模型或重新研究。Claim 是候选，未知不代表已验证；争议信念与撤回记录也可查看。</p>
 <div class="row"><select id="audit-kind" aria-label="审计类型"><option value="beliefs">信念</option><option value="claims">主张</option><option value="sources">来源</option><option value="disputes">争议</option><option value="reports">报告</option><option value="operations">预算事件</option></select>
 <input class="audit-input" id="audit-query" aria-label="关键词" placeholder="文字关键词（不计算向量）"><input class="audit-input" id="audit-state" aria-label="状态筛选" placeholder="状态/类型/主题，精确匹配">
@@ -60,6 +68,10 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||r.status);return x;}
 async function refresh(){try{let s=await api('/api/state');for(let id of ['goals','beliefs','disputes','reports'])show(id,s[id]);show('status',{metrics:s.metrics,job:s.job});}catch(e){show('status',e.message);}}
+// 功能：索引控制只提交固定站内操作，后台调用有界；返回数据使用纯文本，不执行外部文字。
+async function indexAction(action){try{let id=document.getElementById('index-id').value.trim();let path=action==='create'||action==='legacy'?'/api/retrieval-jobs/'+action:'/api/retrieval-jobs/'+encodeURIComponent(id)+'/'+action;let result=await api(path,{});if(result.job_id)document.getElementById('index-id').value=result.job_id;show('index-status',result);}catch(e){show('index-status',e.message);}}
+for(let action of ['create','run','pause','resume','retry','verify','activate','legacy'])document.getElementById('index-'+action).onclick=()=>indexAction(action);
+document.getElementById('index-refresh').onclick=async()=>{try{show('index-status',await api('/api/retrieval-jobs'));}catch(e){show('index-status',e.message);}};
 document.getElementById('refresh').onclick=refresh;document.getElementById('run').onclick=async()=>{try{show('status',await api('/api/run',{}));}catch(e){show('status',e.message);}};
 document.getElementById('stop').onclick=async()=>show('status',await api('/api/stop',{}));
 document.getElementById('add').onclick=async()=>{try{show('added',await api('/api/goals',{title:document.getElementById('goal').value}));await refresh();}catch(e){show('added',e.message);}};
@@ -99,6 +111,23 @@ class Workbench:
         self.nonce = secrets.token_urlsafe(24)
         self.task = None
         self.job = {"status": "idle"}
+        self.index_task = None
+        self.index_worker = {"status": "idle"}
+
+    # 功能：在本机服务进程异步执行有界索引批次；错误仅展示类型，持久任务进度不依赖页面驻留。
+    async def rebuild_index(self, job_id, max_items):
+        self.index_worker = {"status": "running", "job_id": str(job_id)}
+        try:
+            self.index_worker = await job_action(engine, "run", job_id, max_items=max_items)
+        except asyncio.CancelledError:
+            self.index_worker = {"status": "interrupted", "job_id": str(job_id)}
+            raise
+        except Exception as exc:  # noqa: BLE001 - 不因后台工作者失败关闭本地操作入口。
+            self.index_worker = {
+                "status": "failed",
+                "reason": type(exc).__name__,
+                "job_id": str(job_id),
+            }
 
     # 功能：异步执行一轮学习并保存页面可见结果/异常，不创建独立认知数据库。
     async def learn(self):
@@ -116,6 +145,44 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/retrieval-jobs" or path.startswith("/api/retrieval-jobs/"):
+            parts = (
+                path.removeprefix("/api/retrieval-jobs").strip("/").split("/")
+                if path != "/api/retrieval-jobs"
+                else []
+            )
+            if method == "GET" and len(parts) <= 1:
+                params = parse_qs(parsed.query, keep_blank_values=True)
+                if set(params) - {"limit"} or any(len(v) != 1 for v in params.values()):
+                    raise ValueError("索引状态参数仅支持单个limit")
+                result = await job_action(
+                    engine,
+                    "status",
+                    UUID(parts[0]) if parts else None,
+                    limit=int(params.get("limit", [20])[0]),
+                )
+                return {**result, "worker": self.index_worker}
+            if method != "POST" or parsed.query:
+                raise ValueError("索引操作仅支持无查询参数的POST")
+            request = IndexJobRequest.model_validate(body)
+            if len(parts) == 1 and parts[0] in {"create", "legacy"}:
+                return await job_action(engine, parts[0], max_attempts=request.max_attempts)
+            if len(parts) != 2 or parts[1] not in {
+                "run",
+                "pause",
+                "resume",
+                "retry",
+                "verify",
+                "activate",
+            }:
+                raise ValueError("未知索引操作")
+            job_id = UUID(parts[0])
+            if parts[1] == "run":
+                if self.index_task and not self.index_task.done():
+                    return {"status": "running", "worker": self.index_worker}
+                self.index_task = asyncio.create_task(self.rebuild_index(job_id, request.max_items))
+                return {"status": "queued", "job_id": str(job_id)}
+            return await job_action(engine, parts[1], job_id)
         if path.startswith("/api/audit/"):
             if method != "GET":
                 raise ValueError("认知审计仅允许GET只读操作")
@@ -312,4 +379,10 @@ async def serve(port=8765):
     server = await asyncio.start_server(app.connection, "127.0.0.1", port, limit=16000)
     print(f"研究工作台：http://127.0.0.1:{port} ，在浏览器打开；Ctrl+C 停止服务。")
     async with server:
-        await server.serve_forever()
+        try:
+            await server.serve_forever()
+        finally:
+            tasks = [task for task in (app.task, app.index_task) if task and not task.done()]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)

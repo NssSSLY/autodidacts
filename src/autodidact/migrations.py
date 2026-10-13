@@ -16,7 +16,8 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261003_0008"
+HEAD_REVISION = "20261013_0009"
+REVIEW_REVISION = "20261003_0008"
 STRUCTURE_REVISION = "20261003_0007"
 SCOPE_REVISION = "20261003_0006"
 RETRIEVAL_REVISION = "20261002_0005"
@@ -49,6 +50,7 @@ MigrationAction = Literal[
     "stamp_retrieval_then_upgrade",
     "stamp_scope_then_upgrade",
     "stamp_structure_then_upgrade",
+    "stamp_review_then_upgrade",
     "stamp_head",
 ]
 
@@ -79,9 +81,18 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
-# 功能：从当前结构扣除0008信念证据审计列，得到0007完整旧表列集合。
+# 功能：扣除0009候选向量表，得到0008完整旧结构，不将旧库误标为新HEAD。
+def review_schema_columns() -> dict[str, set[str]]:
+    return {
+        name: columns
+        for name, columns in expected_schema_columns().items()
+        if name != "retrieval_vectors"
+    }
+
+
+# 功能：从0008结构扣除信念证据审计列，得到0007完整旧表列集合。
 def structure_schema_columns() -> dict[str, set[str]]:
-    columns = expected_schema_columns()
+    columns = review_schema_columns()
     columns["evidence"].difference_update({"claim_evidence_id", "assessment"})
     return columns
 
@@ -151,6 +162,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == review_schema_columns():
+        return "stamp_review_then_upgrade"
     if actual == structure_schema_columns():
         return "stamp_structure_then_upgrade"
     if actual == scope_schema_columns():
@@ -171,22 +184,19 @@ def decide_initialization_action(
         return "stamp_then_upgrade"
 
     missing_tables = set(expected) - set(actual)
-    if missing_tables:
-        names = ", ".join(sorted(missing_tables))
-        raise RuntimeError(
-            "检测到未受 Alembic 管理的不完整 Autodidact 数据库；"
-            f"缺少数据表：{names}。为保护已有学习状态，已停止自动迁移。"
-        )
-
     mismatches: list[str] = []
     for table_name, expected_names in expected.items():
+        if table_name not in actual:
+            continue
         actual_names = actual[table_name]
         if actual_names != expected_names:
             missing = sorted(expected_names - actual_names)
             extra = sorted(actual_names - expected_names)
             mismatches.append(f"{table_name}(缺少={missing or '无'}, 多出={extra or '无'})")
-    if mismatches:
+    if missing_tables or mismatches:
         details = "; ".join(mismatches)
+        if missing_tables:
+            details = f"缺少数据表：{', '.join(sorted(missing_tables))}；{details}"
         raise RuntimeError(
             f"检测到旧数据库结构与 V0.1 基线不一致。为避免错误标记版本，已停止自动迁移：{details}"
         )
@@ -221,6 +231,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, SCOPE_REVISION)
     elif action == "stamp_structure_then_upgrade":
         command.stamp(config, STRUCTURE_REVISION)
+    elif action == "stamp_review_then_upgrade":
+        command.stamp(config, REVIEW_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

@@ -12,6 +12,7 @@ from autodidact.migrations import (
     decide_initialization_action,
     expected_schema_columns,
     retrieval_schema_columns,
+    review_schema_columns,
     scope_schema_columns,
     source_provenance_schema_columns,
     structure_schema_columns,
@@ -166,3 +167,25 @@ def test_review_downgrade_preserves_core_tables(capsys):
     assert "ALTER TABLE evidence DROP COLUMN assessment" in sql
     assert "ALTER TABLE evidence DROP COLUMN claim_evidence_id" in sql
     assert "DROP TABLE" not in sql
+
+
+# 功能：完整0008旧结构先识别再升级，部分候选结构不得误标HEAD。
+def test_review_schema_upgrades_without_relabeling_old_vectors():
+    legacy = review_schema_columns()
+    assert "retrieval_vectors" not in legacy
+    assert decide_initialization_action(legacy) == "stamp_review_then_upgrade"
+    legacy["retrieval_vectors"] = {"id"}
+    with pytest.raises(RuntimeError, match="retrieval_vectors"):
+        decide_initialization_action(legacy)
+
+
+# 功能：离线确认0009增加候选唯一键/HNSW；回退只丢候选/活动指针，不删除旧向量或认知。
+def test_retrieval_generation_upgrade_downgrade_sql(capsys):
+    command.upgrade(alembic_config(), "20261003_0008:head", sql=True)
+    sql = capsys.readouterr().out
+    assert "CREATE TABLE retrieval_vectors" in sql and "uq_retrieval_vector_item" in sql
+    assert "USING hnsw" in sql and "DROP" not in sql
+    command.downgrade(alembic_config(), "20261013_0009:20261003_0008", sql=True)
+    sql = capsys.readouterr().out
+    assert "DROP TABLE retrieval_vectors" in sql and "kind = 'retrieval_active'" in sql
+    assert "DROP TABLE beliefs" not in sql and "DROP TABLE retrieval_entries" not in sql

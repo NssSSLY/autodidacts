@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-08；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性，schema HEAD仍为20261003_0008。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-13；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性/F07版本化后台嵌入重建，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -58,7 +58,7 @@ CLI / 本地 Workbench
 | [src/autodidact/memory.py](../src/autodidact/memory.py) | 按日整合接纳记忆、失败模式与证据图，提出复核目标和候选研究技能。 | `MemoryConsolidator.consolidate` |
 | [src/autodidact/metrics.py](../src/autodidact/metrics.py) | 提供数据库状态计数与学习/信念比例，不将数量当成智能提升证明。 | `dashboard`、`dashboard.count` |
 | [src/autodidact/migrations.py](../src/autodidact/migrations.py) | 识别已知旧库结构并串行 Alembic 升级，拒绝不完整或未知状态的自动 stamp。 | `alembic_config`、`expected_schema_columns`、`baseline_schema_columns`、`operational_schema_columns`、其余见代码内注释 |
-| [src/autodidact/models.py](../src/autodidact/models.py) | 定义 19 个持久业务表、外键、唯一约束和向量字段。 | `uuid_pk` |
+| [src/autodidact/models.py](../src/autodidact/models.py) | 定义 20 个持久业务表、外键、唯一约束和向量字段。 | `uuid_pk` |
 | [src/autodidact/normalization.py](../src/autodidact/normalization.py) | 集中规范文本与计算稳定摘要，统一目标去重和认识论幂等键。 | `normalize_text_key`、`stable_key`、`claim_statement_key` |
 | [src/autodidact/provider_runtime.py](../src/autodidact/provider_runtime.py) | F06统一失败分类、退避/Retry-After/限时、持久熔断/单探针租约与脱敏健康查询，不改认知信度。 | `ProviderRuntime.run`、`acquire`、`finish`、`HealthStore.edit`、`classify_failure`、`provider_health` |
 | [src/autodidact/reporting.py](../src/autodidact/reporting.py) | 汇总指定时间窗的闭卷趋势、资源用量、错误及冻结实验报告。 | `longitudinal_report` |
@@ -206,7 +206,7 @@ CLI / 本地 Workbench
 
 ## 4. 持久数据模型
 
-共 19 个业务表，另有 Alembic 版本表：
+共 20 个业务表，另有 Alembic 版本表：
 
 | 分组 | 表 | 作用 |
 | --- | --- | --- |
@@ -219,7 +219,7 @@ CLI / 本地 Workbench
 | 评估/方法 | evaluations、skills | 分维度评估审计，研究步骤和验证 metadata |
 | 模型经验 | model_observations、model_profiles | 请求/输出/错误/时延/usage 与统计汇总 |
 | 预算/报告 | operation_events、research_reports | 资源预留/实耗、冻结快照与研究/成长报告 |
-| 派生召回 | retrieval_entries | Goal/Claim/Belief 文本 hash、关键词和指纹向量 |
+| 派生召回 | retrieval_entries、retrieval_vectors | 实时关键词/旧指纹向量；版本化候选向量、摘要、工作状态/次数，活动指针存报告 |
 
 Goal 是意图，Claim 是待核验提议，Belief 是带状态的接纳结论；检索相关性不赋予任何事实等级。四记忆类型通过上述记录映射，不代表已实现四套完整独立记忆系统。
 
@@ -390,3 +390,23 @@ closed允许请求；连续失败达到阈值、401/403/明确挑战或Retry-Aft
 provider-health只读查询1–100，status/workbench状态查询20，F05报告按kind查看；冷却到期只计算probe_available，不主动发请求、不改认知。快照更新、逐次OperationEvent/ModelObservation追加，两者不能混当冻结报告。查询按记录创建时间有界取近期身份，不是所有身份或最近失败的全库排序看板。配置范围见02；无人工重置、主动告警或自动提供方切换。
 
 实际证明：新增32项离线回归、完整251通过/8数据库跳过，编译/Ruff/CLI帮助通过；111个业务Python文件/718个显式方法中文说明无缺失。新增跨实例/单探针/旧信念实库用例未配置而跳过，不证明真实多进程、真实429/封锁、重启或长期运营。旧状态兼容、升级和回退见 [迁移说明](../migrations/README.md#6-f06配置与健康状态兼容无新revision)，验收见V17；F04/F07未开发。
+
+## 18. F07：候选索引与持久后台批次
+
+新增文件职责索引：
+
+| 文件 | 职责/方法 |
+| --- | --- |
+| [retrieval_jobs.py](../src/autodidact/retrieval_jobs.py) | JobStore用短事务保存任务/工作项、统计/分页/核验/指针；RetrievalJobs负责create/control/run/verify/activate/legacy；job_action仅有限CLI/Web动作，只有run请求嵌入。 |
+| [retrieval_job_commands.py](../src/autodidact/retrieval_job_commands.py) | register_retrieval_commands注册七个索引运营命令，不构造认知LLM、不自动迁移。 |
+| [20261013_0009_retrieval_jobs.py](../migrations/versions/20261013_0009_retrieval_jobs.py) | upgrade新增候选/工作项唯一键、HNSW/work索引；downgrade丢候选进度/活动指针而保留旧认知/索引。 |
+| [test_retrieval_jobs.py](../tests/test_retrieval_jobs.py) | 离线状态机、预算/取消/次数上限、封存/回退、失效覆盖、查询SQL与后台路由，不证明真实数据库或收费。 |
+| [test_retrieval_jobs_postgres.py](../tests/test_retrieval_jobs_postgres.py) | 显式*_test随机schema验收旧库保留/持久续跑、实际索引/查询和控制器锁/暂停；未配置跳过。 |
+
+模型新增RetrievalVector：generation_id外键ResearchReport；(generation_id,entity_kind,entity_id)唯一，1536维embedding/content_hash/fingerprint，pending/running/completed/failed/skipped与attempts/error_category。任务报告kind=retrieval_job/protocol=retrieval_job_v1；活动指针kind=retrieval_active/key=vectors/protocol=retrieval_active_v1。不使用通用冻结save_report回写这些可变报告。
+
+路径：CLI/Web有限动作→RetrievalJobs→已有controller_lock（批次独占）→JobStore单项事务→RecordedEmbedding/F06预算与观察→候选表。外部调用前持久化次数/摘要，在途不持行锁；每项提交，完成复用，中断保守保留计数。pause/resume不用控制器锁，retry/run/activate需锁；resume不启动调用。索引核验按250项分页，物理索引检查indisvalid/indisready及访问方法、关键词入口/hash、当前全库覆盖/非零有限float32向量；未知或失效不启用。
+
+启用在事务中封存版本并替换唯一指针。HybridRetriever每次召回只读一次指针，候选按generation/fingerprint/current关键词hash过滤，不混入旧Belief.embedding。无指针/显式legacy保留旧分支；未知协议/不匹配配置只关键词降级。旧认知内容变化使旧语义向量失效，须创建新版本；不自动改模型配置/清理历史。
+
+Workbench.index_task仅本机异步有界批次，查询进度不收费。服务退出取消并等待清理；重启后手动恢复，不是守护进程/分布式队列。新增/修改方法均中文功能说明，旧架构第9–17节是当时历史事实；本轮结果286通过/10跳过，实库/大库/真实服务与SLA待V18。
