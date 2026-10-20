@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-20；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性/F07版本化后台嵌入重建/F04旧信念迁移盲审，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-20；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估、F06提供方运营、F07版本化嵌入、F04旧信念盲审及F08单用户服务化/交付，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18/19节增量索引覆盖业务src/migrations/scripts/tests中的 **120个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
+以下逐文件索引及第18–20节增量索引覆盖业务src/migrations/scripts/tests中的 **128个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
 
-每个业务Python文件首部有中文“文件职责”；全部 **860个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为74文件/441方法。历史注释整理保留原行为，后续F01–F07功能增量见第11–19节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件首部有中文“文件职责”；全部 **970个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为78文件/482方法。历史注释整理保留原行为，后续功能增量见第11–20节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -428,3 +428,25 @@ belief_audit_item映射阻断目标/会话，belief_audit_review为后置终态�
 knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普通F02调用不变；新观察产生边后仍排除完整冻结旧来源，不能受现有100边查询遗漏影响。cli.py新增注册及关闭异常局部变量展示，防配置校验意外打印密钥；未知提供方异常只保存类型，不声称数据库所有历史已脱敏。
 
 无schema/依赖变动，0009/20表。configured_old_identity是冻结时配置，historical_model_identity来自旧metadata或null；仅候选名称/端点/采样摘要不是远端版本认证。字面检查/人工声明不证明无语义泄漏。详细使用/兼容与验收见01第15节、02第11节、V19；322通过/11数据库跳过不是实环境证明。第9–18节保留历史阶段事实。
+
+## 20. F08单用户服务化与交付
+
+| 新文件 | 职责与关键入口 |
+| --- | --- |
+| src/autodidact/service_runtime.py | RunPlan/read_run_plan严格有限计划；database_readiness/service_health只读就绪；service_lease/assert_service_lease计划互斥及锁丢失检测；RunStore运营快照；PlanRunner有界循环/停止/取消；learning_cycle复用原控制器；service_logger/log_event白名单轮转日志 |
+| src/autodidact/service_commands.py | register_service_commands注册8命令，execute_operation仅显示安全错误/类型；恢复只读专用临时环境变量并要求显式确认，不接受argv密码 |
+| src/autodidact/backups.py | pg_environment限制原生客户端环境/连接；pg_process固定命令及超时回收；database_inventory流式20表摘要；backup_database共享导出快照；verify_backup有界校验；restore_database只新空库单事务导入/内容核对 |
+| src/autodidact/delivery.py | 独立标准库文件摘要/依赖精确版本；create_release仅新清单；verify_release完整文件集校验，acceptance固定unverified；main供构建脚本使用，不导入数据库配置 |
+| config/run_plan.example.json | 计划协议与3轮/60秒间隔/1800秒时限示例，不含命令/密钥 |
+| tests/test_service_runtime.py | 离线计划约束、有限运行、停止/取消/预算/失败/锁丢失、快照/日志脱敏、只读健康和真实临时回环HTTP门控 |
+| tests/test_backups.py | 原生客户端/SQL替身，快照接线/归档与表摘要、拒非空/当前库、密码不进argv/环境隔离、超时回收；不假称真实恢复 |
+| tests/test_delivery.py | 合成发布树完整性/错误协议和验收字段、私有文件拒绝、空包拒绝、个人默认文件不覆盖及脚本安全 |
+| tests/test_service_postgres.py | 仅显式*_test随机schema，真实服务锁互斥/丢失、持久进度/旧认知与只读健康/内容摘要；缺配置跳过，不导入原生归档 |
+
+调用层：CLI run-plan或工作台显式start → 只读就绪 → service_lease(718204615) → RunStore(kind=service_run) → 每轮查锁 → 原AutonomousLearner.run_cycle与controller_lock(718204611)/原预算/续跑 → 有限进度/日志。运营报告是专用可变快照，不混冻结报告/真值；硬崩溃running不等于活进程，重启不自动支付。
+
+备份：服务/控制器锁 → public只读一致快照 → 20表摘要+pg_export_snapshot → 原生pg_dump --snapshot → 新归档+manifest。恢复：可信归档/协议摘要 → 显式新空库/锁/非系统关系检查 → pg_restore单事务无clean/create → 同版本/行数/内容核对；不改源库/当前配置。客户端不受控身份认证不由SHA代替，原生操作真实验收待V20。
+
+既有文件变化：cli.py注册新命令；commands.py传serve --plan；workbench.py去隐式迁移、计划区及受控API/最小healthz/未就绪503/退出等待；launcher.py只补个人缺失文件；spec与pyproject明确包含计划/基准例子及迁移源码而非缓存；build_exe.ps1检查干净输入、生成新唯一package目录并核验文件/依赖清单，默认不安装依赖、不覆盖旧包。没有OS常驻服务/全网页进程排他、多用户认证或自动更新。
+
+没有新revision/必需依赖，仍0009/20表；旧认知/向量/冻结评估不回填。当前380通过/13数据库跳过、F08定向58通过/2跳过，编译/Ruff通过；实库/多进程/原生恢复/长运行/干净机器及签名待V20，本机EXE实际结果见02/05。前述历史第9–19节不倒填新验证。

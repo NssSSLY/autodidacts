@@ -298,12 +298,12 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
-    # 功能：在指定本地端口启动研究工作台，不开启公网监听。
+    # 功能：启动本地工作台，可只加载计划供预览；不自动迁移或执行计划，不开启公网监听。
     @app.command("serve")
-    def serve_command(port: int = typer.Option(8765, min=1024, max=65535)):
+    def serve_command(port: int = typer.Option(8765, min=1024, max=65535), plan: str = ""):
         from autodidact.workbench import serve
 
-        asyncio.run(serve(port))
+        asyncio.run(serve(port, plan_path=plan))
 
     # 功能：读取本地材料，保存等级 1 来源并创建关联学习目标，不直接生成 verified 信念。
     @app.command("import-document")

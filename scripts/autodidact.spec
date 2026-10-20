@@ -5,8 +5,15 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 root = Path(SPECPATH).parent
 datas = [(str(root / "alembic.ini"), "autodidact/_resources"),
          (str(root / ".env.example"), "autodidact/_resources"),
-         (str(root / "migrations"), "autodidact/_resources/migrations"),
-         (str(root / "config" / "agent.yaml"), "autodidact/_resources/config")]
+         (str(root / "config" / "agent.yaml"), "autodidact/_resources/config"),
+         (str(root / "config" / "run_plan.example.json"), "autodidact/_resources/config"),
+         (str(root / "migrations" / "script.py.mako"), "autodidact/_resources/migrations")]
+# 只收明确源码/样例，不递归复制__pycache__、用户配置或临时备份。
+for path in (root / "migrations").rglob("*.py"):
+    if "__pycache__" not in path.parts:
+        datas.append((str(path), str(Path("autodidact/_resources") / path.parent.relative_to(root))))
+for name in ("sample.json", "reliable_sample.json", "belief_audit.example.json"):
+    datas.append((str(root / "data" / "benchmark" / name), "autodidact/_resources/data/benchmark"))
 datas += collect_data_files("playwright")
 hidden = collect_submodules("sqlalchemy.dialects.postgresql") + collect_submodules("asyncpg")
 a = Analysis([str(root / "scripts" / "autodidact_launcher.py")],

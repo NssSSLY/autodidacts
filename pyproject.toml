@@ -42,6 +42,10 @@ packages = ["src/autodidact"]
 "alembic.ini" = "autodidact/_resources/alembic.ini"
 "migrations" = "autodidact/_resources/migrations"
 "config/agent.yaml" = "autodidact/_resources/config/agent.yaml"
+"config/run_plan.example.json" = "autodidact/_resources/config/run_plan.example.json"
+"data/benchmark/sample.json" = "autodidact/_resources/data/benchmark/sample.json"
+"data/benchmark/reliable_sample.json" = "autodidact/_resources/data/benchmark/reliable_sample.json"
+"data/benchmark/belief_audit.example.json" = "autodidact/_resources/data/benchmark/belief_audit.example.json"
 ".env.example" = "autodidact/_resources/.env.example"
 
 [tool.pytest.ini_options]

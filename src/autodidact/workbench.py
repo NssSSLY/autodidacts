@@ -14,17 +14,25 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 
 from autodidact import models
-from autodidact.agent import AutonomousLearner
 from autodidact.audit import KINDS, AuditNotFound, AuditQuery, CognitiveAudit
 from autodidact.brain.llm import build_llm
 from autodidact.brain.observed import ObservedLLM
-from autodidact.db import SessionLocal, engine, init_database
+from autodidact.db import SessionLocal, engine
 from autodidact.goals.scorer import goal_score
 from autodidact.metrics import dashboard
 from autodidact.repository import Repository
 from autodidact.retrieval_jobs import job_action
 from autodidact.runtime import controller_lock
 from autodidact.schemas import CandidateGoal
+from autodidact.service_runtime import (
+    PlanRunner,
+    RunPlan,
+    RunStore,
+    learning_cycle,
+    read_run_plan,
+    service_health,
+    service_logger,
+)
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +62,7 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 </style>
 <h1>Autodidact 研究工作台</h1><small>持久目标、信念、证据和争议 · 本机访问</small>
 <section><h2>研究控制</h2><div class="row"><button id="refresh">刷新状态</button><button id="run">开始一轮学习</button><button id="stop">中断当前学习</button></div><pre id="status">加载中…</pre></section>
+<section><h2>单用户运行计划与健康</h2><p>计划只在点击后执行，可能付费。正常停止在当前轮后收尾；重启不自动继续。数据库未就绪请先备份并显式init-db，不会自动迁移。</p><div class="row"><button id="service-refresh">健康/计划</button><button id="service-start">按计划运行</button><button id="service-stop">本轮后停止</button></div><pre id="service-status"></pre></section>
 <section><h2>创建学习目标</h2><input id="goal" placeholder="例如：研究视觉定位失效的边界条件"><button id="add">加入目标池</button><pre id="added"></pre></section>
 <section><h2>围绕已有知识提问</h2><input id="question" placeholder="输入问题"><button id="ask">查看回答与证据</button><pre id="answer"></pre><small>模型解释是待核验建议；保存的信念与引用单独列出。需要新知识时，请创建学习目标。</small></section>
 <section><h2>最近目标</h2><pre id="goals"></pre></section><section><h2>信念与争议</h2><pre id="beliefs"></pre><pre id="disputes"></pre></section>
@@ -66,7 +75,7 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <p id="audit-message" role="status"></p><pre id="audit-budget"></pre><div id="audit-list"></div><nav class="row"><button id="audit-prev">上一页</button><button id="audit-next">下一页</button></nav>
 <div id="audit-detail" hidden><hr><h2 id="audit-detail-title"></h2><button id="audit-back">返回上一条详情</button><p id="audit-detail-message" role="status"></p><nav class="row" id="audit-parts"></nav><div id="audit-data"></div><div id="audit-items"></div><nav class="row" id="audit-detail-pages"></nav><h3>关联追溯</h3><div class="row" id="audit-references"></div></div></section>
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
-async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||r.status);return x;}
+async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||JSON.stringify(x));return x;}
 async function refresh(){try{let s=await api('/api/state');for(let id of ['goals','beliefs','disputes','reports'])show(id,s[id]);show('status',{metrics:s.metrics,job:s.job});}catch(e){show('status',e.message);}}
 // 功能：索引控制只提交固定站内操作，后台调用有界；返回数据使用纯文本，不执行外部文字。
 async function indexAction(action){try{let id=document.getElementById('index-id').value.trim();let path=action==='create'||action==='legacy'?'/api/retrieval-jobs/'+action:'/api/retrieval-jobs/'+encodeURIComponent(id)+'/'+action;let result=await api(path,{});if(result.job_id)document.getElementById('index-id').value=result.job_id;show('index-status',result);}catch(e){show('index-status',e.message);}}
@@ -74,6 +83,9 @@ for(let action of ['create','run','pause','resume','retry','verify','activate','
 document.getElementById('index-refresh').onclick=async()=>{try{show('index-status',await api('/api/retrieval-jobs'));}catch(e){show('index-status',e.message);}};
 document.getElementById('refresh').onclick=refresh;document.getElementById('run').onclick=async()=>{try{show('status',await api('/api/run',{}));}catch(e){show('status',e.message);}};
 document.getElementById('stop').onclick=async()=>show('status',await api('/api/stop',{}));
+document.getElementById('service-refresh').onclick=async()=>{try{show('service-status',{health:await api('/api/service/health'),plan:await api('/api/service/plan'),runs:await api('/api/service/runs')});}catch(e){show('service-status',e.message);}};
+document.getElementById('service-start').onclick=async()=>{try{show('service-status',await api('/api/service/start',{}));}catch(e){show('service-status',e.message);}};
+document.getElementById('service-stop').onclick=async()=>show('service-status',await api('/api/service/stop',{}));
 document.getElementById('add').onclick=async()=>{try{show('added',await api('/api/goals',{title:document.getElementById('goal').value}));await refresh();}catch(e){show('added',e.message);}};
 document.getElementById('ask').onclick=async()=>{try{show('answer',await api('/api/ask',{question:document.getElementById('question').value}));}catch(e){show('answer',e.message);}};
 // 功能：所有库内/外部内容以textContent展示；关联按钮仅使用服务器校验过的站内类型/UUID。
@@ -105,7 +117,7 @@ refresh();setInterval(refresh,10000);</script></html>"""
 
 class Workbench:
     # 功能：保存端口、生成本地请求 Token，初始化学习任务与最近结果状态。
-    def __init__(self, port):
+    def __init__(self, port, plan=None):
         self.port = port
         self.token = secrets.token_urlsafe(32)
         self.nonce = secrets.token_urlsafe(24)
@@ -113,6 +125,8 @@ class Workbench:
         self.job = {"status": "idle"}
         self.index_task = None
         self.index_worker = {"status": "idle"}
+        self.plan = plan or RunPlan()
+        self.runner = None
 
     # 功能：在本机服务进程异步执行有界索引批次；错误仅展示类型，持久任务进度不依赖页面驻留。
     async def rebuild_index(self, job_id, max_items):
@@ -129,12 +143,12 @@ class Workbench:
                 "job_id": str(job_id),
             }
 
-    # 功能：异步执行一轮学习并保存页面可见结果/异常，不创建独立认知数据库。
-    async def learn(self):
+    # 功能：显式执行一轮或已加载有限计划，使用单计划锁/持久进度；不自动迁移或重启收费。
+    async def learn(self, plan=None):
         self.job = {"status": "running"}
         try:
-            async with SessionLocal() as session:
-                self.job = await AutonomousLearner(session, build_llm()).run_cycle()
+            self.runner = PlanRunner(engine, learning_cycle, logger=service_logger())
+            self.job = await self.runner.run(plan or RunPlan())
         except asyncio.CancelledError:
             self.job = {"status": "interrupted", "note": "下次运行将保留证据并重试中断目标"}
             raise
@@ -145,6 +159,30 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path.startswith("/api/service/"):
+            if parsed.query or body:
+                raise ValueError("服务操作不接收额外参数")
+            if path == "/api/service/health" and method == "GET":
+                return await service_health(engine)
+            if path == "/api/service/plan" and method == "GET":
+                return {"plan": self.plan.model_dump(), "auto_start": False, "job": self.job}
+            if path == "/api/service/runs" and method == "GET":
+                return await RunStore(engine).status()
+            if path == "/api/service/stop" and method == "POST":
+                if self.runner:
+                    self.runner.request_stop()
+                elif self.task and not self.task.done():
+                    self.task.cancel()
+                    self.job = {"status": "stopped", "reason": "cancelled_before_start"}
+                return {"status": "stop_after_cycle_requested"}
+            if path == "/api/service/start" and method == "POST":
+                if any(task and not task.done() for task in (self.task, self.index_task)):
+                    raise ValueError("已有学习/索引任务，请先停止或等候完成")
+                self.runner = None
+                self.job = {"status": "queued"}
+                self.task = asyncio.create_task(self.learn(self.plan))
+                return {"status": "queued", "plan": self.plan.model_dump()}
+            raise ValueError("未知服务操作或方法")
         if path == "/api/retrieval-jobs" or path.startswith("/api/retrieval-jobs/"):
             parts = (
                 path.removeprefix("/api/retrieval-jobs").strip("/").split("/")
@@ -178,6 +216,8 @@ class Workbench:
                 raise ValueError("未知索引操作")
             job_id = UUID(parts[0])
             if parts[1] == "run":
+                if self.task and not self.task.done():
+                    raise ValueError("已有学习任务，不能同时启动索引后台批次")
                 if self.index_task and not self.index_task.done():
                     return {"status": "running", "worker": self.index_worker}
                 self.index_task = asyncio.create_task(self.rebuild_index(job_id, request.max_items))
@@ -239,8 +279,12 @@ class Workbench:
                     ],
                 }
             if path == "/api/run" and method == "POST":
+                if self.index_task and not self.index_task.done():
+                    raise ValueError("已有索引任务，不能同时启动学习")
                 if self.task and not self.task.done():
                     return {"status": "running"}
+                self.runner = None
+                self.job = {"status": "queued"}
                 self.task = asyncio.create_task(self.learn())
                 return {"status": "queued"}
             if path == "/api/stop" and method == "POST":
@@ -320,6 +364,7 @@ class Workbench:
     # 功能：解析有界 HTTP 请求并核对 Host/Origin/Token，发送带安全头响应后关闭连接。
     async def connection(self, reader, writer):
         try:
+            status = "200 OK"
             header = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=10)
             if len(header) > 12000:
                 raise ValueError("请求头过大")
@@ -331,7 +376,10 @@ class Workbench:
             if headers.get("host") != host:
                 raise ValueError("请使用127.0.0.1地址访问工作台")
             path = urlsplit(target).path
-            if path == "/" and method == "GET":
+            if path == "/healthz" and method == "GET":
+                data = b'{"alive":true}'
+                content_type = "application/json; charset=utf-8"
+            elif path == "/" and method == "GET":
                 data = PAGE.replace("TOKEN", self.token).replace("NONCE", self.nonce).encode()
                 content_type = "text/html; charset=utf-8"
             else:
@@ -351,9 +399,10 @@ class Workbench:
                 if not isinstance(body, dict):
                     raise ValueError("请求内容必须是JSON对象")
                 response = await self.dispatch(target, method, body)
+                if path == "/api/service/health" and not response.get("ready"):
+                    status = "503 Service Unavailable"
                 data = json.dumps(response, ensure_ascii=False, default=str).encode()
                 content_type = "application/json; charset=utf-8"
-            status = "200 OK"
         except Exception as exc:  # noqa: BLE001 - contain malformed requests and provider errors.
             status = "404 Not Found" if isinstance(exc, AuditNotFound) else "400 Bad Request"
             message = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
@@ -372,10 +421,9 @@ class Workbench:
         await writer.wait_closed()
 
 
-# 功能：初始化数据库并在 127.0.0.1 启动工作台服务，退出时处理本进程任务，不提供公网账号系统。
-async def serve(port=8765):
-    await init_database()
-    app = Workbench(port)
+# 功能：只加载计划/启动回环服务，不自动迁移或学习；数据库失效仍可看存活页，退出取消本进程任务。
+async def serve(port=8765, *, plan_path=""):
+    app = Workbench(port, read_run_plan(plan_path) if plan_path else RunPlan())
     server = await asyncio.start_server(app.connection, "127.0.0.1", port, limit=16000)
     print(f"研究工作台：http://127.0.0.1:{port} ，在浏览器打开；Ctrl+C 停止服务。")
     async with server:

@@ -1,0 +1,6 @@
+{
+  "protocol": "single_user_plan_v1",
+  "max_cycles": 3,
+  "interval_seconds": 60,
+  "max_runtime_seconds": 1800
+}

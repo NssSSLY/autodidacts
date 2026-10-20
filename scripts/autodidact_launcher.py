@@ -1,30 +1,46 @@
 # 文件职责：作为 EXE 入口分离用户配置与程序资源；默认启动本地工作台。
-"""Installed program entry point; user configuration stays outside the bundle."""
+"""安装后程序入口；用户配置始终保留在打包目录之外。"""
 
 import os
-import shutil
 import sys
 from pathlib import Path
 
 from autodidact.resources import resource_root
 
 
-# 功能：EXE 模式只补不存在的用户配置并切换工作目录，无参数时运行 serve；源码模式直接转交 CLI。
+# 功能：独占补齐缺失的个人默认文件，已有.env/策略/计划绝不覆盖，不把用户数据放回程序目录。
+def initialize_user_home(destination, assets):
+    destination.mkdir(parents=True, exist_ok=True)
+    files = [
+        ("config/agent.yaml", "config/agent.yaml"),
+        (".env.example", ".env"),
+        ("config/run_plan.example.json", "config/run_plan.json"),
+    ]
+    files.extend(
+        (f"data/benchmark/{name}", f"data/benchmark/{name}")
+        for name in ("sample.json", "reliable_sample.json", "belief_audit.example.json")
+    )
+    for source, target in files:
+        path = destination / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            continue
+        content = (assets / source).read_bytes()
+        try:
+            with path.open("xb") as stream:
+                stream.write(content)
+        except FileExistsError:
+            pass
+
+
+# 功能：EXE模式使用个人配置目录，默认只打开计划预览工作台；源码模式直接转交CLI，不自动学习/迁移。
 def main():
     if getattr(sys, "frozen", False):
         destination = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Autodidact"
-        destination.mkdir(parents=True, exist_ok=True)
-        (destination / "config").mkdir(exist_ok=True)
-        assets = resource_root()
-        for source, target in [
-            (assets / "config" / "agent.yaml", destination / "config" / "agent.yaml"),
-            (assets / ".env.example", destination / ".env"),
-        ]:
-            if not target.exists():
-                shutil.copy2(source, target)
+        initialize_user_home(destination, resource_root())
         os.chdir(destination)
         if len(sys.argv) == 1:
-            sys.argv.append("serve")
+            sys.argv.extend(["serve", "--plan", "config/run_plan.json"])
     from autodidact.cli import app
 
     app()
