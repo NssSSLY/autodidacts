@@ -26,6 +26,8 @@ class RuntimeSettings(BaseSettings):
     web_models_config: str = "config/web_models.yaml"
     enabled_web_models: str = ""
     benchmark_snapshot_id: str = ""
+    mastery_benchmark_id: str = ""
+    mastery_group_id: str = Field(default="", pattern=r"^(?:[0-9a-f]{64})?$")
     migration_new_api_key: str = ""
     embedding_provider: str = "disabled"
     embedding_base_url: str = "https://api.openai.com/v1"

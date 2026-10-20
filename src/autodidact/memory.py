@@ -11,6 +11,7 @@ from autodidact import models
 from autodidact.knowledge.belief_review import queue_stale_reviews
 from autodidact.learning.evaluation_contracts import SkillDrafts
 from autodidact.learning.ground_truth import evaluation_groups
+from autodidact.mastery import configured_mastery
 from autodidact.normalization import normalize_text_key
 
 
@@ -19,7 +20,7 @@ class MemoryConsolidator:
     def __init__(self, repo, llm):
         self.repo, self.llm = repo, llm
 
-    # 功能：按UTC日期幂等生成报告、排过旧信念原文复核目标，提取候选方法；不冒充保持实验或删旧认知。
+    # 功能：按UTC日幂等整合、复核排队/候选方法与可选F09画像；旧mastery计数字段保留但明确非掌握度。
     async def consolidate(self):
         day = datetime.now(UTC).date().isoformat()
         existing = await self.repo.get_report("memory_daily", day)
@@ -153,6 +154,9 @@ class MemoryConsolidator:
             "day": day,
             "memory": memory,
             "mastery": mastery,
+            "topic_inventory": mastery,
+            "mastery_field_protocol": "legacy_inventory_only",
+            "mastery_profile": await configured_mastery(self.repo),
             "mean_closed_book_score": next(iter(score_groups.values()))["mean_score"]
             if len(score_groups) == 1
             else None,
@@ -161,7 +165,7 @@ class MemoryConsolidator:
             "candidate_skill_ids": created,
             "belief_review_goal_ids": review_goals,
             "graph": {"nodes": graph_nodes, "edges": graph_edges},
-            "note": "掌握概况是证据与近期测试摘要；主题共现不作为知识关系或事实证明。",
+            "note": "旧mastery/topic_inventory只是信念数量，不是掌握度；F09画像来自既有可靠答卷/证据，无历史则未知，主题共现不是因果。",
         }
         report = await self.repo.save_report("memory_daily", payload, day)
         return {

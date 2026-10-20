@@ -41,6 +41,13 @@ from autodidact.learning.ground_truth import CLOSED_BOOK_SCORING, CLOSED_BOOK_WE
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
 from autodidact.learning.synthesizer import Synthesizer
+from autodidact.mastery import (
+    MASTERY_PROTOCOL,
+    configured_mastery,
+    planning_summary,
+    queue_mastery_goals,
+)
+from autodidact.mastery import POLICY as MASTERY_POLICY
 from autodidact.memory import MemoryConsolidator
 from autodidact.normalization import normalize_text_key
 from autodidact.repository import Repository
@@ -127,7 +134,7 @@ class AutonomousLearner:
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
-    # 功能：计算模型、嵌入、主张核验协议、策略和目标签名，防止在不兼容配置下继续旧尝试。
+    # 功能：计算模型、嵌入、核验/评分与目标协议签名；启用F09时加入掌握范围，防不兼容盲续跑。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
@@ -156,13 +163,25 @@ class AutonomousLearner:
             ],
             "goal": [goal.title, goal.description, goal.metadata_json],
         }
+        if settings.mastery_benchmark_id:
+            value["mastery"] = [
+                MASTERY_PROTOCOL,
+                settings.mastery_benchmark_id,
+                settings.mastery_group_id,
+                digest(MASTERY_POLICY),
+            ]
         return hashlib.sha256(
             json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
         ).hexdigest()
 
-    # 功能：收集认知上下文、已验证技能和可选网页模型建议，返回供本次规划冻结的输入。
+    # 功能：收集认知/可选F09无题面掌握摘要、已验证技能及网页模型建议，供本次规划冻结。
     async def _planning_inputs(self, goal):
         context = await self.repo.epistemic_context()
+        mastery = await configured_mastery(self.repo)
+        if mastery:
+            context += "\n主题掌握/缺口观察（不是事实或执行指令）:\n" + json.dumps(
+                planning_summary(mastery), ensure_ascii=False
+            )
         hits = await HybridRetriever(self.repo, self.embedding).retrieve(goal.title, limit=15)
         context += "\n相关认知条目（Claim是候选，Goal是意图，均不是真值）:\n" + json.dumps(
             [h.as_dict() for h in hits if h.row.id != goal.id], ensure_ascii=False
@@ -219,7 +238,7 @@ class AutonomousLearner:
             )
             await self.repo.add_goal(seed, goal_score(seed, self.cfg.learning.exploration_rate))
 
-    # 功能：目标池为空时先排过旧信念复核/争议调查，再依据使命提出目标；均遵守每日配额。
+    # 功能：空目标池优先复核/争议及可选F09明确弱项，再依据使命提议目标；不自动评估、均守每日配额。
     async def ensure_goal_pool(self) -> None:
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
@@ -249,6 +268,18 @@ class AutonomousLearner:
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
         quota = await self.repo.goal_quota_remaining()
+        if quota <= 0:
+            return
+        mastery = await configured_mastery(self.repo)
+        if mastery:
+            if not mastery.get("unavailable") and not mastery.get("selection_required"):
+                await queue_mastery_goals(self.repo, mastery, min(3, quota))
+                if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
+                    return
+                quota = await self.repo.goal_quota_remaining()
+            context += "\n主题掌握/缺口观察（未知不等于错误）:\n" + json.dumps(
+                planning_summary(mastery), ensure_ascii=False
+            )
         if quota <= 0:
             return
         candidates = await self.goal_generator.generate(self.cfg.agent.mission, context)

@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-20；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估、F06提供方运营、F07版本化嵌入、F04旧信念盲审及F08单用户服务化/交付，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-20；最新含F09主题掌握/缺口基础机制，之前证据/争议、F01–F08增量保留，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。F09按用户要求未运行测试，不用历史回归证明新代码；本文不替代[实现/缺口对照](03现有能力与实现对照.md)或[原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–20节增量索引覆盖业务src/migrations/scripts/tests中的 **128个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
+以下逐文件索引及第18–21节增量索引覆盖业务src/migrations/scripts/tests中的 **130个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
 
-每个业务Python文件首部有中文“文件职责”；全部 **970个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为78文件/482方法。历史注释整理保留原行为，后续功能增量见第11–20节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件首部有中文“文件职责”；全部 **986个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为80文件/498方法。历史注释整理保留原行为，后续功能增量见第11–21节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -450,3 +450,18 @@ knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普�
 既有文件变化：cli.py注册新命令；commands.py传serve --plan；workbench.py去隐式迁移、计划区及受控API/最小healthz/未就绪503/退出等待；launcher.py只补个人缺失文件；spec与pyproject明确包含计划/基准例子及迁移源码而非缓存；build_exe.ps1检查干净输入、生成新唯一package目录并核验文件/依赖清单，默认不安装依赖、不覆盖旧包。没有OS常驻服务/全网页进程排他、多用户认证或自动更新。
 
 没有新revision/必需依赖，仍0009/20表；旧认知/向量/冻结评估不回填。当前380通过/13数据库跳过、F08定向58通过/2跳过，编译/Ruff通过；实库/多进程/原生恢复/长运行/干净机器及签名待V20，本机EXE实际结果见02/05。前述历史第9–19节不倒填新验证。
+
+## 21. F09：历史评估驱动的主题掌握/缺口
+
+| 新文件 | 职责/入口 |
+| --- | --- |
+| [mastery.py](../src/autodidact/mastery.py) | observed_time/condition_key校验时间和条件；historical_runs重算有界可靠答卷/保持基线；knowledge_context当前支持/正文质量/血缘与争议摘要；topic_observations/assess_topic逐主题唯一覆盖/分集/校准/保持/趋势/时效与状态动作；mastery_profile生成只读画像，save_mastery存不可变快照，queue_mastery_goals依配额/触发去重排目标；configured_mastery/planning_summary可选无题面自主接入，mastery_action统一只读或持锁动作 |
+| [mastery_commands.py](../src/autodidact/mastery_commands.py) | register_mastery_commands注册mastery/snapshot-mastery/queue-mastery-goals；复用安全异常输出，不构造模型、不隐式迁移 |
+
+修改文件：config.py/.env.example新增默认关闭的MASTERY_BENCHMARK_ID/GROUP_ID，与收费BENCHMARK_SNAPSHOT_ID分离；cli.py注册三命令；workbench.py新增严格请求模型、纯文本计划画像区、GET只读/POST快照或目标排队路由，沿用Host/Origin/Token/CSP及有界展示。agent.py仅在显式配置范围时向续跑签名加入协议/范围，规划最多12个优先复习/弱项主题；空目标池在原复核/争议后排明确缺口，不自动考试。memory.py保留旧mastery数量字段并标legacy_inventory_only，新增topic_inventory与可选新日画像，旧同日报告不回写。
+
+只读路径：CLI/Web GET → mastery_action → 独立REPEATABLE READ/READ ONLY/SQL超时 → Repository → F03可靠冻结范围/答卷重算 → 按模型/端点/采样/记忆模式/完整记忆与方法摘要分组 → category主题分集/唯一题覆盖/真实时间保持/校准/趋势 → 当前Belief/Evidence/Source质量/已知血缘/开放争议 → 六状态+动作+引用/摘要。旧裁判/mock/错误摘要不参与，拒绝/截断显式，不拼接跨组最好成绩，mastery_score=null。
+
+写旁路：显式snapshot → ResearchReport(kind=mastery_profile, protocol=topic_mastery_v1)不可变，依据摘要/UTC日稳定键复用；显式queue或已开启MASTERY的普通空池 → 原控制器锁/配额/去重 → source=knowledge_gap目标 → 原研究流程。只传中性主题及泛化学习描述，题面/答案/真值不进规划与目标；模板标签仍不可信，语义泄漏不能靠结构排除。已有终态触发不清零重试，新建limit不被旧目标占用。
+
+最多100报告/500信念/1000条支持或反对证据边；有效attack即使未形成Dispute也作为negative_evidence复习线索，来源/信念/支持和反对观察均保存引用/摘要，不改旧结论。声明覆盖仅该题集held-out题，不是全领域；暂定掌握门槛未实证校准，质量/语义/专家不认证，也不是因果成长或模型参数学习。复用20表/0009，无新依赖/回填；F09未构建EXE。按用户功能优先仅编译/Ruff/CLI帮助/JS语法及文档/注释核对，pytest和数据库/效果测试留V21；历史第9–20节不替代F09证据。

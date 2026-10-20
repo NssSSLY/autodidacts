@@ -14,11 +14,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 
 from autodidact import models
-from autodidact.audit import KINDS, AuditNotFound, AuditQuery, CognitiveAudit
+from autodidact.audit import KINDS, AuditNotFound, AuditQuery, CognitiveAudit, bounded_display
 from autodidact.brain.llm import build_llm
 from autodidact.brain.observed import ObservedLLM
 from autodidact.db import SessionLocal, engine
 from autodidact.goals.scorer import goal_score
+from autodidact.mastery import mastery_action
 from autodidact.metrics import dashboard
 from autodidact.repository import Repository
 from autodidact.retrieval_jobs import job_action
@@ -49,6 +50,13 @@ class IndexJobRequest(BaseModel):
     max_attempts: int = Field(default=3, ge=1, le=5)
 
 
+class MasteryRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    benchmark_id: UUID
+    group_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    limit: int = Field(default=3, ge=1, le=20, strict=True)
+
+
 PAGE = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Autodidact 研究工作台</title>
 <style>body{font-family:system-ui;background:#f4f5f7;color:#18232d;max-width:1100px;margin:32px auto;padding:0 20px}
@@ -67,6 +75,7 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <section><h2>围绕已有知识提问</h2><input id="question" placeholder="输入问题"><button id="ask">查看回答与证据</button><pre id="answer"></pre><small>模型解释是待核验建议；保存的信念与引用单独列出。需要新知识时，请创建学习目标。</small></section>
 <section><h2>最近目标</h2><pre id="goals"></pre></section><section><h2>信念与争议</h2><pre id="beliefs"></pre><pre id="disputes"></pre></section>
 <section><h2>研究报告</h2><pre id="reports"></pre></section>
+<section><h2>主题掌握与知识缺口</h2><p>只重算已保存的可靠基准答卷，不启动考试或模型。覆盖率仅针对声明题集；未知不是已掌握。多条件组须明确选择，不自动取最好成绩。</p><input id="mastery-id" placeholder="可靠冻结基准 UUID"><input id="mastery-group" placeholder="group_id（只有一个条件组时可留空）"><div class="row"><button id="mastery-show">查看掌握/缺口</button><button id="mastery-snapshot">保存画像快照</button><button id="mastery-queue">仅排学习/复习目标（不运行）</button></div><pre id="mastery-status"></pre></section>
 <section><h2>嵌入重建运营</h2><p>先在配置中启用1536维嵌入服务。创建/查看/校验不请求模型，后台运行会按次计费；批次结束后需明确续跑。暂停等待在途项收尾，启用仅影响召回，不修改信念。</p><div class="row"><button id="index-create">创建候选版本</button><button id="index-refresh">刷新任务</button></div><input id="index-id" placeholder="索引任务 UUID"><div class="row"><button id="index-run">后台运行（最多200项）</button><button id="index-pause">暂停</button><button id="index-resume">恢复排队</button><button id="index-retry">重排失败项</button><button id="index-verify">校验完整性</button><button id="index-activate">启用版本</button><button id="index-legacy">切回旧索引</button></div><pre id="index-status"></pre></section>
 <section id="audit"><h2>认知审计 · 只读</h2><p class="muted">查看已保存的证据链，不调用模型或重新研究。Claim 是候选，未知不代表已验证；争议信念与撤回记录也可查看。</p>
 <div class="row"><select id="audit-kind" aria-label="审计类型"><option value="beliefs">信念</option><option value="claims">主张</option><option value="sources">来源</option><option value="disputes">争议</option><option value="reports">报告</option><option value="operations">预算事件</option></select>
@@ -86,6 +95,9 @@ document.getElementById('stop').onclick=async()=>show('status',await api('/api/s
 document.getElementById('service-refresh').onclick=async()=>{try{show('service-status',{health:await api('/api/service/health'),plan:await api('/api/service/plan'),runs:await api('/api/service/runs')});}catch(e){show('service-status',e.message);}};
 document.getElementById('service-start').onclick=async()=>{try{show('service-status',await api('/api/service/start',{}));}catch(e){show('service-status',e.message);}};
 document.getElementById('service-stop').onclick=async()=>show('service-status',await api('/api/service/stop',{}));
+// 功能：仅发送固定掌握动作，查看为GET；快照/排队须点击，不把输入解释成命令，全部结果纯文本。
+async function masteryAction(action){try{let data={benchmark_id:document.getElementById('mastery-id').value.trim()};let group=document.getElementById('mastery-group').value.trim();if(group)data.group_id=group;let result=action==='show'?await api('/api/mastery?'+new URLSearchParams(data)):await api('/api/mastery/'+action,data);show('mastery-status',result);if(result.display_truncated)document.getElementById('mastery-status').append(String.fromCharCode(10)+'页面展示有截断，完整画像请用mastery CLI读取。');}catch(e){show('mastery-status',e.message);}}
+for(let action of ['show','snapshot','queue'])document.getElementById('mastery-'+action).onclick=()=>masteryAction(action);
 document.getElementById('add').onclick=async()=>{try{show('added',await api('/api/goals',{title:document.getElementById('goal').value}));await refresh();}catch(e){show('added',e.message);}};
 document.getElementById('ask').onclick=async()=>{try{show('answer',await api('/api/ask',{question:document.getElementById('question').value}));}catch(e){show('answer',e.message);}};
 // 功能：所有库内/外部内容以textContent展示；关联按钮仅使用服务器校验过的站内类型/UUID。
@@ -159,6 +171,28 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/mastery" or path.startswith("/api/mastery/"):
+            if path == "/api/mastery" and method == "GET" and not body:
+                parameters = parse_qs(parsed.query, keep_blank_values=True)
+                if set(parameters) - {"benchmark_id", "group_id"} or any(
+                    len(v) != 1 for v in parameters.values()
+                ):
+                    raise ValueError("掌握查看仅接受单一benchmark_id及可选group_id")
+                request = MasteryRequest.model_validate({k: v[0] for k, v in parameters.items()})
+                action = "show"
+            elif (
+                path in {"/api/mastery/snapshot", "/api/mastery/queue"}
+                and method == "POST"
+                and not parsed.query
+            ):
+                request = MasteryRequest.model_validate(body)
+                action = path.rsplit("/", 1)[1]
+            else:
+                raise ValueError("未知掌握动作/方法或重复参数")
+            result = await mastery_action(
+                engine, action, request.benchmark_id, request.group_id, request.limit
+            )
+            return bounded_display({"data": result})
         if path.startswith("/api/service/"):
             if parsed.query or body:
                 raise ValueError("服务操作不接收额外参数")
