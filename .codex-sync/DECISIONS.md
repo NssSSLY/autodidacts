@@ -29,3 +29,5 @@
 - 构建必须干净源码、新唯一版本目录、不覆盖旧包；个人配置只补缺失。依赖/提交/文件清单acceptance固定unverified，不冒充签名、位级复现或干净机器验收。无schema升级，仍0009/20表；V20与V16–V19保留，后续F09证据不足必须unknown。
 
 - 无新schema仍0009/20表；serve显式init-db，重启不自动收费；恢复仅可信新空_restore/_test库；发布acceptance固定unverified，保留旧认知和旧包
+
+- 保留全部失败和修正记录/旧包及用户归档；serve不自动迁移或付费；备份只可信新空库，清单unverified不是正式发行；无新schema仍0009
