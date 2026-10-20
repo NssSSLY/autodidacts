@@ -153,8 +153,8 @@ class BeliefReviewer:
             "review_goal_id": str(review_goal.id) if review_goal else None,
         }
 
-    # 功能：独立获取旧信念支持来源之外的新资料；失败保留未知，原文反对与合格替代主张才可开争议。
-    async def investigate(self, belief_id, attempt):
+    # 功能：独立获取旧支持之外的新资料，可附加冻结排除集；失败保留未知，仅原文反对/合格替代句可开争议。
+    async def investigate(self, belief_id, attempt, *, extra_exclusions=()):
         key = f"{belief_id}:{attempt.id}"
         report = await self.repo.get_report("belief_review", key)
         if report:
@@ -171,7 +171,7 @@ class BeliefReviewer:
                 .limit(100)
             )
         ).all()
-        excluded = []
+        excluded = list(extra_exclusions)
         for source_id in {e.source_id for e in edges if e.source_id}:
             source = await self.repo.s.get(models.Source, source_id)
             if source:

@@ -1,0 +1,12 @@
+{
+  "protocol": "belief_migration_audit_v1",
+  "label": "替换为此次盲审批次名称",
+  "reviewer": "替换为实际问题审核者",
+  "neutral_questions_confirmed": true,
+  "items": [
+    {
+      "belief_id": "00000000-0000-0000-0000-000000000000",
+      "question": "在GNSS中断场景中，如何描述IMU单独定位的误差演变及其适用条件？"
+    }
+  ]
+}

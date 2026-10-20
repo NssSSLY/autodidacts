@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-13；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性/F07版本化后台嵌入重建，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-20；原业务基线 d7f6583，后续含争议缓存修复、F01 A–D、F02负面证据/历史复核、F05只读审计、F03可靠真值/版本评估及F06提供方运营可靠性/F07版本化后台嵌入重建/F04旧信念迁移盲审，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。本文描述当前代码，不替代 [实现/缺口对照](03现有能力与实现对照.md)或 [原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引覆盖业务 src/migrations/scripts/tests 中的 **111 个 Python 文件、3 个 shell/PowerShell 脚本、1 个 PyInstaller spec、1 个迁移模板**，不包含 .venv、第三方包、构建产物或临时检查工具。独立开发辅助工具 tools/codex-sync 单列第16节及自身架构，不纳入业务计数。每一行链接到实际文件，不把同目录几个文件混写为一个职责。
+以下逐文件索引及第18/19节增量索引覆盖业务src/migrations/scripts/tests中的 **120个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
 
-每个业务 Python 文件首部有中文“文件职责”；全部 **718 个显式方法/函数（含私有方法、抽象协议和嵌套回调）**前有中文“功能”注释。历史注释整理保留原行为；之后F01/F02/F05/F03/F06是明确功能增量，见第11–15/17节。数据模型自动生成的方法不在手工函数计数中。
+每个业务Python文件首部有中文“文件职责”；全部 **860个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为74文件/441方法。历史注释整理保留原行为，后续F01–F07功能增量见第11–19节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -410,3 +410,21 @@ provider-health只读查询1–100，status/workbench状态查询20，F05报告�
 启用在事务中封存版本并替换唯一指针。HybridRetriever每次召回只读一次指针，候选按generation/fingerprint/current关键词hash过滤，不混入旧Belief.embedding。无指针/显式legacy保留旧分支；未知协议/不匹配配置只关键词降级。旧认知内容变化使旧语义向量失效，须创建新版本；不自动改模型配置/清理历史。
 
 Workbench.index_task仅本机异步有界批次，查询进度不收费。服务退出取消并等待清理；重启后手动恢复，不是守护进程/分布式队列。新增/修改方法均中文功能说明，旧架构第9–17节是当时历史事实；本轮结果286通过/10跳过，实库/大库/真实服务与SLA待V18。
+
+## 19. F04：冻结旧认知、盲答与后置核源
+
+| 新文件 | 职责/关键方法 |
+| --- | --- |
+| [belief_audit.py](../src/autodidact/belief_audit.py) | AuditManifest严格人工清单/声明/唯一校验；belief_snapshot/support_snapshot冻结旧认知及完整有界支持；freeze_audit保存hash；BeliefMigrationAudit分离status/answer/verify、阻断目标会话映射、次数与快照门控。 |
+| [belief_audit_commands.py](../src/autodidact/belief_audit_commands.py) | 四个CLI；candidate仅构造候选API工具并限制跨端点密钥，run_audit使用已有控制器/learner预算与DurableSteps，不自动切模型/迁移。 |
+| [test_belief_audit.py](../tests/test_belief_audit.py) | 离线选样/严格清单/盲答不泄漏/重放/预算取消次数/身份/hash/旧源读取/F02门控端到端。 |
+| [test_belief_audit_postgres.py](../tests/test_belief_audit_postgres.py) | 显式*_test随机schema验收报告唯一、跨实例盲答复用/专用会话、旧结论/metadata不变；无配置跳过。 |
+| [belief_audit.example.json](../data/benchmark/belief_audit.example.json) | 人工中性题示例，零UUID/审核者/label须替换；不是可信专家题集。 |
+
+链路：freeze人工题/旧信念与支持hash/配置身份→ResearchReport(kind=frozen_belief_audit，belief_migration_audit_v1)→answer仅传question→kind=belief_audit_answer先落库→verify关系观察/最多3旧URL→Synthesizer+BeliefReviewer.observe原文锚点/范围→BeliefReviewer.investigate独立新原文与合格替代→既有Dispute/历史。不从盲答直接构建事实Evidence，不调用Resolver自动选边。
+
+belief_audit_item映射阻断目标/会话，belief_audit_review为后置终态；专用报告不可变，复用save_report类型/键唯一。目标直接以blocked持久化，崩溃后按稳定title/会话恢复映射，不向普通学习队列暴露含旧答案的任务。phase次数在LearningSession.result.audit_attempts，保守有界，成功外部结果复用既有DurableSteps；终态unknown不自动再发。来源或认知变化严格拒绝后续收费，精细部分核验续跑仍待扩展。
+
+knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普通F02调用不变；新观察产生边后仍排除完整冻结旧来源，不能受现有100边查询遗漏影响。cli.py新增注册及关闭异常局部变量展示，防配置校验意外打印密钥；未知提供方异常只保存类型，不声称数据库所有历史已脱敏。
+
+无schema/依赖变动，0009/20表。configured_old_identity是冻结时配置，historical_model_identity来自旧metadata或null；仅候选名称/端点/采样摘要不是远端版本认证。字面检查/人工声明不证明无语义泄漏。详细使用/兼容与验收见01第15节、02第11节、V19；322通过/11数据库跳过不是实环境证明。第9–18节保留历史阶段事实。
