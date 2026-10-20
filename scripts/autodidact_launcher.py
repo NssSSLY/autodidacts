@@ -36,7 +36,8 @@ def initialize_user_home(destination, assets):
 # 功能：EXE模式使用个人配置目录，默认只打开计划预览工作台；源码模式直接转交CLI，不自动学习/迁移。
 def main():
     if getattr(sys, "frozen", False):
-        destination = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Autodidact"
+        local_data = os.environ.get("LOCALAPPDATA")
+        destination = (Path(local_data) if local_data else Path.home()) / "Autodidact"
         initialize_user_home(destination, resource_root())
         os.chdir(destination)
         if len(sys.argv) == 1:

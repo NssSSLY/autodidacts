@@ -1,10 +1,13 @@
 # 文件职责：离线验证版本清单/完整目录校验、私有文件拒绝与EXE用户配置不覆盖，不构建或运行实际EXE。
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from autodidact import delivery
+from scripts import autodidact_launcher as launcher
 from scripts.autodidact_launcher import initialize_user_home
 
 
@@ -73,7 +76,7 @@ def test_empty_release_is_not_deliverable(tmp_path):
 
 
 # 功能：首次补默认文件，第二次启动保留已有密钥/策略/计划，缺文件可单独补齐。
-def test_launcher_seeds_without_overwriting_private_files(tmp_path):
+def test_launcher_seeds_without_overwriting_private_files(tmp_path, monkeypatch):
     destination = tmp_path / "user"
     assets = Path(__file__).resolve().parents[1]
     initialize_user_home(destination, assets)
@@ -83,6 +86,19 @@ def test_launcher_seeds_without_overwriting_private_files(tmp_path):
     initialize_user_home(destination, assets)
     assert (destination / ".env").read_text(encoding="utf-8") == "private-user-key"
     assert (destination / "config/run_plan.json").read_text(encoding="utf-8") == "custom plan"
+    # 功能：显式LOCALAPPDATA存在时不求值Path.home，兼容精简环境/自动化启动且不接触真实个人配置。
+    calls = []
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "argv", ["Autodidact.exe", "--help"])
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: pytest.fail("不能读取无关home")))
+    monkeypatch.setattr(launcher, "resource_root", lambda: assets)
+    monkeypatch.setitem(
+        sys.modules, "autodidact.cli", SimpleNamespace(app=lambda: calls.append("cli"))
+    )
+    monkeypatch.chdir(tmp_path)
+    launcher.main()
+    assert calls == ["cli"] and Path.cwd() == tmp_path / "Autodidact"
 
 
 # 功能：构建脚本必须使用新输出目录/明确安装开关/真实Git身份，不保留无条件覆盖旧包参数。
