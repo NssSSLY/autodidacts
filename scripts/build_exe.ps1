@@ -1,4 +1,4 @@
-# 文件职责：从干净Git代码生成全新版本目录和文件/依赖清单；不覆盖旧发布，安装依赖需显式参数。
+﻿# 文件职责：从干净Git代码生成全新版本目录和文件/依赖清单；UTF-8 BOM兼容Windows PowerShell5.1中文，不覆盖旧发布。
 param([switch]$InstallDependencies, [string]$RequirementsLock = '')
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path

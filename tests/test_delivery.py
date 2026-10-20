@@ -89,6 +89,7 @@ def test_launcher_seeds_without_overwriting_private_files(tmp_path):
 def test_build_recipe_safety():
     root = Path(__file__).resolve().parents[1]
     script = (root / "scripts/build_exe.ps1").read_text(encoding="utf-8-sig")
+    assert (root / "scripts/build_exe.ps1").read_bytes().startswith(b"\xef\xbb\xbf")
     spec = (root / "scripts/autodidact.spec").read_text(encoding="utf-8-sig")
     assert "--noconfirm" not in script and "--clean" not in script
     assert (
