@@ -19,6 +19,7 @@ class WebModelConfig(BaseModel):
     send_selector: str
     assistant_message_selector: str
     new_chat_selector: str | None = None
+    require_new_chat: bool = False
     done_selector: str | None = None
     headless: bool = False
     response_timeout_seconds: int = 120
@@ -51,7 +52,7 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
         except Exception:  # noqa: BLE001
             return False
 
-    # 功能：通过配置 UI 输入问题并等待回答完成，收集正文/引用作为等级 0 观察，最后关闭上下文。
+    # 功能：通过合法配置UI取得等级0回答；F11强制新会话且旧回答清空才发送，不自动登录/重发。
     async def ask(self, prompt: str) -> ModelAnswer:
         async with async_playwright() as p:
             ctx = await p.chromium.launch_persistent_context(
@@ -61,9 +62,22 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
             try:
                 page = ctx.pages[0] if ctx.pages else await ctx.new_page()
                 await page.goto(self.config.url, wait_until="domcontentloaded")
+                from autodidact.provider_runtime import reject_challenge
+
+                reject_challenge(await page.content())
+                if self.config.require_new_chat and not self.config.new_chat_selector:
+                    raise ValueError("独立盲答须配置并执行新会话动作")
                 if self.config.new_chat_selector:
                     locator = page.locator(self.config.new_chat_selector)
-                    if await locator.count():
+                    if self.config.require_new_chat:
+                        await locator.first.wait_for(state="visible", timeout=30000)
+                        await locator.first.click()
+                        cleared_deadline = asyncio.get_running_loop().time() + 30
+                        while await page.locator(self.config.assistant_message_selector).count():
+                            if asyncio.get_running_loop().time() >= cleared_deadline:
+                                raise ValueError("新会话旧回答未清空，拒绝发送独立问题")
+                            await asyncio.sleep(0.2)
+                    elif await locator.count():
                         await locator.first.click()
                 old_count = await page.locator(self.config.assistant_message_selector).count()
                 box = page.locator(self.config.input_selector).first

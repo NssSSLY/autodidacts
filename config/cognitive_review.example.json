@@ -1,0 +1,11 @@
+{
+  "label": "首次独立审查-请按真实问题修改",
+  "topic": "无人机定位",
+  "question": "在卫星定位不可用时，惯性导航有哪些适用条件与局限，需要哪些证据才能评价？",
+  "neutral_question_declared": true,
+  "source_ids": ["model_a", "model_b"],
+  "critic_id": "model_b",
+  "synthesizer_id": "model_a",
+  "claim_ids": [],
+  "belief_ids": []
+}

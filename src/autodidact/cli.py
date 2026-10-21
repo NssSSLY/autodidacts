@@ -13,6 +13,7 @@ from autodidact.agent import AutonomousLearner
 from autodidact.belief_audit_commands import register_belief_audit_commands
 from autodidact.brain.factory import build_judge
 from autodidact.brain.llm import build_llm
+from autodidact.cognition_commands import register_cognition_commands
 from autodidact.commands import controlled, register_commands
 from autodidact.config import agent_config, runtime_settings
 from autodidact.db import SessionLocal, engine, init_database
@@ -36,6 +37,7 @@ register_service_commands(app)
 register_mastery_commands(app)
 register_graph_commands(app)
 register_lifecycle_commands(app)
+register_cognition_commands(app)
 
 
 # 功能：按 LOG_LEVEL 设置标准日志格式，供学习进程输出阶段与错误。

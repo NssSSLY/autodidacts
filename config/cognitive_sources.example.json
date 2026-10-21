@@ -1,0 +1,7 @@
+{
+  "protocol": "cognitive_sources_v1",
+  "sources": [
+    {"id": "model_a", "kind": "api", "enabled": false, "model": "填实际模型名", "base_url": "https://example.com/v1", "api_key_env": "COGNITIVE_A_API_KEY", "input_usd_per_million": 0, "output_usd_per_million": 0},
+    {"id": "model_b", "kind": "api", "enabled": false, "model": "填另一个实际模型名", "base_url": "https://example.org/v1", "api_key_env": "COGNITIVE_B_API_KEY", "input_usd_per_million": 0, "output_usd_per_million": 0}
+  ]
+}

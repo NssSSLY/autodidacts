@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from autodidact import models
 from autodidact.config import runtime_settings
+from autodidact.learning.ground_truth import digest
 from autodidact.provider_runtime import ProviderIdentity, ProviderRuntime, classify_failure
 from autodidact.runtime import OperationBudget
 from autodidact.web_models.playwright_adapter import PlaywrightWebModelAdapter, WebModelConfig
@@ -31,9 +32,18 @@ class WebModelService:
             raise ValueError(f"网页提供方未配置：{provider}")
         return PlaywrightWebModelAdapter(WebModelConfig(provider=provider, **entry))
 
-    # 功能：以提供方/URL/选择器/资料目录摘要隔离健康；网页提交不自动重发，熔断后在真实新调用单探针。
-    async def ask(self, provider, prompt, **context):
+    # 功能：按完整配置隔离健康且不自动重发；F11显式fresh_chat强制新会话，沿预算和0级审计。
+    async def ask(
+        self, provider, prompt, *, fresh_chat=False, expected_config_sha256=None, **context
+    ):
         adapter = self.adapter(provider)
+        if (
+            expected_config_sha256 is not None
+            and digest(adapter.config.model_dump(mode="json")) != expected_config_sha256
+        ):
+            raise ValueError("网页来源配置已改变，拒绝使用旧冻结身份提交")
+        if fresh_chat:
+            adapter.config = adapter.config.model_copy(update={"require_new_chat": True})
         identity = ProviderIdentity(
             "web_model", provider, adapter.config.url, credential=adapter.config.model_dump_json()
         )

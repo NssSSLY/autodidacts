@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import secrets
+from typing import Literal
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
@@ -17,6 +18,8 @@ from autodidact import models
 from autodidact.audit import KINDS, AuditNotFound, AuditQuery, CognitiveAudit, bounded_display
 from autodidact.brain.llm import build_llm
 from autodidact.brain.observed import ObservedLLM
+from autodidact.cognitive_review import cognition_action
+from autodidact.cognitive_sources import Role
 from autodidact.db import SessionLocal, engine
 from autodidact.goals.scorer import goal_score
 from autodidact.knowledge.graph import GraphQuery, RelationDraft, graph_action
@@ -80,6 +83,17 @@ class MaintenanceSuggestionRequest(BaseModel):
     limit: int = Field(default=3, ge=1, le=20, strict=True)
 
 
+class CognitionQuery(BaseModel):
+    model_config = {"extra": "forbid"}
+    action: Literal["sources", "show", "route", "provenance"] = "sources"
+    review_id: UUID | None = None
+    kind: Literal["claim", "belief", "observation"] = "claim"
+    entity_id: UUID | None = None
+    role: Role = "blind"
+    topic: str = Field(default="general", min_length=1, max_length=200)
+    fallback: str = Field(default="", max_length=60)
+
+
 PAGE = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Autodidact 研究工作台</title>
 <style>body{font-family:system-ui;background:#f4f5f7;color:#18232d;max-width:1100px;margin:32px auto;padding:0 20px}
@@ -108,8 +122,18 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <div id="audit-detail" hidden><hr><h2 id="audit-detail-title"></h2><button id="audit-back">返回上一条详情</button><p id="audit-detail-message" role="status"></p><nav class="row" id="audit-parts"></nav><div id="audit-data"></div><div id="audit-items"></div><nav class="row" id="audit-detail-pages"></nav><h3>关联追溯</h3><div class="row" id="audit-references"></div></div></section>
 <section><h2>概念关系与前置知识</h2><p>只读查看当前关系/原范围/支持/历史，不调用模型。关系不是因果证明；仅supported的requires可排有限前置调查目标，不自动开始研究。模型提取/复核需在CLI显式授权。</p><input id="graph-concept" placeholder="概念UUID（留空查看第一页）"><input id="graph-relation" placeholder="关系UUID（查看详情/历史时填写，概念留空）"><input id="graph-offset" type="number" min="0" max="10000" value="0" placeholder="offset"><div class="row"><button id="graph-show">只读查看</button><button id="graph-refresh">保存当前关系状态</button><button id="graph-queue">仅排前置调查目标</button></div><pre id="graph-status"></pre></section>
 <section><h2>记忆维护 · 建议与可恢复归档</h2><p>只读查看不写状态。生成建议/提交提议不会归档；执行需逐项确认。归档不是判假，恢复不提高置信度；相似或过旧线索只能复核。非破坏性归并只允许同范围文字重复，原证据和历史不转移/删除。</p><div class="row"><select id="maintenance-kind"><option value="belief">信念</option><option value="skill">技能</option></select><select id="maintenance-state"><option>active</option><option>archived</option><option>all</option></select><input class="audit-input" id="maintenance-offset" type="number" min="0" max="10000" value="0"></div><input id="maintenance-entity" placeholder="记忆UUID（查看单项历史/提交提议时用）"><input id="maintenance-proposal" placeholder="提议UUID（查看提议或执行/拒绝时用）"><div class="row"><button id="maintenance-show">只读查看</button><button id="maintenance-suggest">仅生成规则建议</button></div><div class="row"><select id="maintenance-action"><option value="archive">归档提议</option><option value="restore">恢复提议</option><option value="group">重复归并提议</option><option value="review">仅复核线索</option></select><input id="maintenance-target" class="audit-input" placeholder="group的代表记忆UUID"></div><input id="maintenance-reason" placeholder="提议或决定理由（必填）"><input id="maintenance-actor" value="local_user" placeholder="操作人声明"><div class="row"><button id="maintenance-propose">仅保存提议</button><button id="maintenance-apply">确认执行所选提议</button><button id="maintenance-reject">确认拒绝提议</button></div><pre id="maintenance-status"></pre></section>
+<section><h2>认知来源与多模型审查 · 只读</h2><p>先在CLI配置/冻结并显式运行盲答→批判→综合，可能收费；网页这里只查看，不发送模型请求、不改真值或配置。模型一致不等于独立证据，历史来源缺失保持未知。</p><input id="cognition-review" placeholder="审查批次UUID"><div class="row"><button id="cognition-sources">来源配置声明</button><button id="cognition-show">查看阶段与论证图</button></div><div class="row"><select id="cognition-kind"><option>claim</option><option>belief</option><option>observation</option></select><input id="cognition-entity" placeholder="认知记录UUID"><button id="cognition-provenance">只读溯源</button></div><div class="row"><select id="cognition-role"><option>blind</option><option>critique</option><option>synthesis</option></select><input id="cognition-topic" value="general" placeholder="精确主题"><input id="cognition-fallback" placeholder="人工fallback来源ID"><button id="cognition-route">仅查看路由建议</button></div><pre id="cognition-status"></pre></section>
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||JSON.stringify(x));return x;}
+// 功能：F11网页只发送固定GET只读查询，外部回答/论证全部纯文本展示，不触发模型阶段。
+async function cognitionAction(action){try{
+  const value=id=>document.getElementById('cognition-'+id).value.trim();let q=new URLSearchParams({action});
+  if(action==='show')q.set('review_id',value('review'));
+  if(action==='provenance'){q.set('kind',value('kind'));q.set('entity_id',value('entity'));}
+  if(action==='route'){q.set('role',value('role'));q.set('topic',value('topic'));q.set('fallback',value('fallback'));}
+  show('cognition-status',await api('/api/cognition?'+q));
+}catch(e){show('cognition-status',e.message);}}
+for(let action of ['sources','show','provenance','route'])document.getElementById('cognition-'+action).onclick=()=>cognitionAction(action);
 // 功能：记忆维护只提交固定动作；查看为GET，改变可见性前人工确认特定提议，不执行外部文字或模型。
 async function maintenanceAction(action){try{
   const value=id=>document.getElementById('maintenance-'+id).value.trim();let result;
@@ -220,6 +244,27 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/cognition":
+            if method != "GET" or body:
+                raise ValueError("F11网页仅允许无请求体GET，不开放收费/配置/真值写入口")
+            parameters = parse_qs(parsed.query, keep_blank_values=True)
+            if any(len(v) != 1 for v in parameters.values()):
+                raise ValueError("认知查询参数不得重复")
+            query = CognitionQuery.model_validate({k: v[0] for k, v in parameters.items()})
+            allowed = {
+                "sources": {"action"},
+                "show": {"action", "review_id"},
+                "route": {"action", "role", "topic", "fallback"},
+                "provenance": {"action", "kind", "entity_id"},
+            }
+            if (
+                not set(parameters) <= allowed[query.action]
+                or (query.action == "show" and not query.review_id)
+                or (query.action == "provenance" and not query.entity_id)
+            ):
+                raise ValueError("F11查询字段与动作不匹配或缺少UUID")
+            result = await cognition_action(engine, **query.model_dump())
+            return bounded_display({"data": result})
         if path == "/api/memory-maintenance" or path.startswith("/api/memory-maintenance/"):
             if path == "/api/memory-maintenance" and method == "GET" and not body:
                 parameters = parse_qs(parsed.query, keep_blank_values=True)

@@ -1,5 +1,6 @@
 .venv/
 .env
+config/cognitive_sources.json
 __pycache__/
 *.py[cod]
 .pytest_cache/

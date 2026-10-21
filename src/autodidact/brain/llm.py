@@ -129,6 +129,19 @@ class MockLLM(LLM):
             return schema.model_validate(
                 {"kind": "uncertain", "parts": [], "reason": "Mock 不认证主张结构"}
             )
+        if name == "ReviewCritique":
+            return schema.model_validate(
+                {"summary": "Mock仅演示阶段记录，不作真实批判或事实判断。", "arguments": []}
+            )
+        if name == "ReviewSynthesis":
+            return schema.model_validate(
+                {
+                    "conclusion": "Mock没有真实综合结论。",
+                    "cited_source_ids": [],
+                    "unresolved": ["缺真实模型和独立证据"],
+                    "checks_needed": ["配置真实来源并通过既有独立核源流程调查"],
+                }
+            )
         raise RuntimeError(f"MockLLM has no fixture for schema {name}")
 
 

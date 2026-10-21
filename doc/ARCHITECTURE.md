@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-21；最新F13维护/可恢复生命周期，schema HEAD `20261021_0011` /仍22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-21；最新F11来源/多模型分阶段审查，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13/F11按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–23节增量索引覆盖业务src/migrations/scripts/tests中的 **136个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
+以下逐文件索引及第18–24节增量索引覆盖业务src/migrations/scripts/tests中的 **139个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
 
-每个业务Python文件有中文“文件职责”；全部 **1035个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独84文件/543方法。增量见第11–23节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件有中文“文件职责”；全部 **1065个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独87文件/573方法。增量见第11–24节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -506,3 +506,22 @@ knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普�
 工作台专属维护GET /api/memory-maintenance独立READ ONLY/重复读/SQL5秒/整体20秒；POST严格suggest/propose/decide白名单，写锁/30秒，confirm严格布尔，沿Host/Origin/Token/CSP/纯文本与bounded_display。操作人是声明，不是生产认证；F05通用人工真值审批并未因此完成。详情可按UUID查提议/当前/事件/分组成员，分页/截断仍受限，只有人工明确确认才执行。
 
 0011仍22表/无新依赖，先用匹配旧版备份再显式迁移；新增默认列改变整行JSONhash，旧列保全与恢复见迁移12节/V23。旧F08 EXE不含F09/F10/F13，不混新库。按用户要求只静态/编译/5帮助/JS语法，未运行pytest/真实库/模型/浏览器效果或新包。下一F11；语义合并、成熟情景记忆归档、自动策略收益和大库公平扫描另行设计/验收。
+
+## 24. F11：认知来源、阶段报告与0级论证图
+
+| 文件 | 实际职责与方法 |
+| --- | --- |
+| [cognitive_sources.py](../src/autodidact/cognitive_sources.py) | CognitiveSource/SourceCatalog严格显式清单，settings/descriptor/build隔离采样价格/无秘密身份/受审计模型；read_catalog有界本地JSON；route_sources按精确上下文运营样本建议、Profile仅参考；cognitive_provenance区分显式引用与session关联。 |
+| [cognitive_review.py](../src/autodidact/cognitive_review.py) | ReviewManifest/ReviewCritique/ReviewSynthesis协议；read_review_manifest/checked有界/完整性；CognitiveReview.basis/freeze/load冻结、records/status读取历史/图、parse_output锚定、execute/finish先入场后调用及观察恢复、run阶段屏障；cognition_action统一只读/锁/授权。 |
+| [cognition_commands.py](../src/autodidact/cognition_commands.py) | register_cognition_commands注册六CLI，run需allow-model，网页/未知重发另需显式选择；execute_operation不输出校验输入/外部异常正文。 |
+| [cognitive_sources.example.json](../config/cognitive_sources.example.json) / [cognitive_review.example.json](../config/cognitive_review.example.json) | 无真实凭据且默认禁用的来源模板、人工中性问题/角色模板；实际来源清单被.gitignore排除。 |
+
+链路：本地来源声明→冻结问题/来源指纹/关联Claim与Belief内容（不传模型）→每来源blind只见问题→全部初答确定且至少2成功→critique结构化逐字quote指定答复→synthesis保留分歧/待核源→只读阶段/观察与论证图。模型论证supports/attacks不进入F10事实表，不写原Claim/Belief/Evidence/Dispute，也不按票数晋升。
+
+ResearchReport复用三个不可变kind及唯一键：cognitive_review、cognitive_review_attempt、cognitive_review_result，含protocol/hash/父依据与调用ID。写持控制器锁；调用前先保存入场，成功ModelObservation可恢复结果不重发；failed需人工retry-failed，uncertain需retry-uncertain确认重复收费风险，逻辑次数最多3且沿原max_retry。下游入场后禁止修改上游，来源/关联内容变化拒绝续跑；取消/预算/数据库错误不吞。外部调用到观察入库间崩溃仍非exactly-once。
+
+ObservedLLM新增可选settings只用于F11单来源估算/采样；所有新版API观察增加无秘密model_identity，旧行不回填。WebModelService.ask新增fresh_chat默认false，F11强制require_new_chat并等待旧回答清空；原普通网页调用不强制，新增验证页拒绝不规避。API沿F06可靠性/预算，网页不自动重发；网页平台隐藏上下文/实际模型仍未知。
+
+工作台CognitionQuery/GET /api/cognition白名单仅sources/show/route/provenance，严格字段/重复参数和原Host/Origin/Token/CSP、有界纯文本；收费阶段只在CLI。来源列表只读本地配置，其他查看独立数据库READ ONLY重复读/SQL5秒/总20秒。无新schema/依赖/常驻任务，仍0011/22表。
+
+route最多200条同指纹/角色/主题观察，所有候选≥3样本才按调用成功率建议；否则保持人工fallback，不自动改配置。Profile最多5项只读参考，旧模型名统计不能跨端点直接排能力。provenance最多20Claim/50观察/100锚点/100信念证据，超限标记；缺身份保持未知，会话共现非生成因果。真实恢复/语义/模型/网页/费用/净收益待V24，本轮不测试；下一F12。

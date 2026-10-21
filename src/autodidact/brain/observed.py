@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from autodidact import models
 from autodidact.brain.llm import LLM
 from autodidact.config import runtime_settings
+from autodidact.learning.ground_truth import model_identity
 from autodidact.provider_runtime import ProviderIdentity, ProviderRuntime, classify_failure
 from autodidact.runtime import OperationBudget
 
@@ -33,13 +34,14 @@ def valid_usage(raw):
 
 
 class ObservedLLM(LLM):
-    # 功能：包装模型并建立独立审计会话与预算，记录学习/裁判等调用角色。
-    def __init__(self, inner: LLM, engine, *, role: str = "learner"):
+    # 功能：包装模型/角色及独立审计预算；F11可固定本来源采样/价格配置，不改变默认学习设置。
+    def __init__(self, inner: LLM, engine, *, role: str = "learner", settings=None):
         self.inner = inner
         self.provider_name, self.model_name = inner.provider_name, inner.model_name
         self.sessions = async_sessionmaker(engine, expire_on_commit=False)
         self.budget = OperationBudget(engine)
         self.role = role
+        self.settings = settings
         self.context: dict = {}
         self.runtime = ProviderRuntime(engine)
         self.identity = ProviderIdentity(
@@ -67,7 +69,7 @@ class ObservedLLM(LLM):
 
     # 功能：预留一次模型调用预算并保存原答复/usage/取消/失败分类，每次重试保留独立账本和等级0观察。
     async def _attempt(self, system, user, invoke, schema_name, operation_context):
-        settings = runtime_settings()
+        settings = self.settings or runtime_settings()
         # UTF-8 bytes are a conservative admission estimate, not reported token usage.
         input_bound = len((system + user).encode("utf-8")) + 256
         output_bound = settings.llm_max_output_tokens
@@ -113,6 +115,7 @@ class ObservedLLM(LLM):
                 ) / 1_000_000
             metadata = {
                 "evidence_level": 0,
+                "model_identity": model_identity(self.inner),
                 "role": self.role,
                 "schema": schema_name,
                 "usage": usage,

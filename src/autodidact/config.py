@@ -24,6 +24,7 @@ class RuntimeSettings(BaseSettings):
     judge_llm_base_url: str = ""
     judge_llm_api_key: str = ""
     web_models_config: str = "config/web_models.yaml"
+    cognitive_sources_config: str = "config/cognitive_sources.json"
     enabled_web_models: str = ""
     benchmark_snapshot_id: str = ""
     mastery_benchmark_id: str = ""
