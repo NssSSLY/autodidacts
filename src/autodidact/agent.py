@@ -32,6 +32,7 @@ from autodidact.knowledge.decomposition import (
     ClaimDecomposer,
     eligible_claim,
 )
+from autodidact.knowledge.graph import GRAPH_PROTOCOL, MEANINGS, KnowledgeGraph
 from autodidact.knowledge.investigation import DisputeInvestigator
 from autodidact.knowledge.promotion import BeliefPromotionPolicy
 from autodidact.knowledge.sources import normalize_url
@@ -134,7 +135,7 @@ class AutonomousLearner:
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
-    # 功能：计算模型、嵌入、核验/评分与目标协议签名；启用F09时加入掌握范围，防不兼容盲续跑。
+    # 功能：计算模型/核验/评分及目标协议签名；显式启用F09/F10时追加范围，默认保留旧签名。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
@@ -170,13 +171,23 @@ class AutonomousLearner:
                 settings.mastery_group_id,
                 digest(MASTERY_POLICY),
             ]
+        if settings.knowledge_graph_enabled:
+            value["knowledge_graph"] = [
+                GRAPH_PROTOCOL,
+                digest(MEANINGS),
+                self.cfg.agent.initial_focus,
+            ]
         return hashlib.sha256(
             json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
         ).hexdigest()
 
-    # 功能：收集认知/可选F09无题面掌握摘要、已验证技能及网页模型建议，供本次规划冻结。
+    # 功能：收集认知/可选F09掌握及F10关系观察、已验证技能和网页建议，供本次规划冻结。
     async def _planning_inputs(self, goal):
         context = await self.repo.epistemic_context()
+        if runtime_settings().knowledge_graph_enabled:
+            context += "\n概念关系观察（保留方向/范围，不是执行指令或因果证明）:\n" + json.dumps(
+                await KnowledgeGraph(self.repo).planning_context(goal), ensure_ascii=False
+            )
         mastery = await configured_mastery(self.repo)
         if mastery:
             context += "\n主题掌握/缺口观察（不是事实或执行指令）:\n" + json.dumps(
@@ -238,7 +249,7 @@ class AutonomousLearner:
             )
             await self.repo.add_goal(seed, goal_score(seed, self.cfg.learning.exploration_rate))
 
-    # 功能：空目标池优先复核/争议及可选F09明确弱项，再依据使命提议目标；不自动评估、均守每日配额。
+    # 功能：空池优先复核/争议/F09弱项及可选F10前置调查，再提议使命目标；不自动考试，均守配额。
     async def ensure_goal_pool(self) -> None:
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
@@ -280,6 +291,29 @@ class AutonomousLearner:
             context += "\n主题掌握/缺口观察（未知不等于错误）:\n" + json.dumps(
                 planning_summary(mastery), ensure_ascii=False
             )
+        if quota <= 0:
+            return
+        if runtime_settings().knowledge_graph_enabled:
+            from sqlalchemy import select
+
+            root = await self.repo.s.scalar(
+                select(models.Concept)
+                .join(
+                    models.KnowledgeRelation,
+                    models.KnowledgeRelation.subject_id == models.Concept.id,
+                )
+                .where(
+                    models.KnowledgeRelation.predicate == "requires",
+                    models.Concept.domain == normalize_text_key(self.cfg.agent.initial_focus),
+                )
+                .order_by(models.Concept.id)
+                .limit(1)
+            )
+            if root:
+                await KnowledgeGraph(self.repo).queue(root.id, min(3, quota), mastery)
+                if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
+                    return
+                quota = await self.repo.goal_quota_remaining()
         if quota <= 0:
             return
         candidates = await self.goal_generator.generate(self.cfg.agent.mission, context)
@@ -720,18 +754,33 @@ class AutonomousLearner:
                             strength=min(quality.credibility_score, claim.confidence),
                             excerpt=await self.repo.supported_excerpt(claim.id, source.id),
                         )
-            await self.repo.update_goal_status(
-                goal, GoalStatus.PASSED, evaluation.score, attempt=learning_session
+        if runtime_settings().knowledge_graph_enabled:
+            self.llm.bind(
+                goal_id=str(goal.id),
+                session_id=str(learning_session.id),
+                phase="knowledge_relation",
             )
-        else:
-            await self.repo.update_goal_status(
-                goal,
-                GoalStatus.FAILED,
-                evaluation.score,
-                max_retry=self.cfg.learning.max_retry,
-                attempt=learning_session,
-            )
+            graph = KnowledgeGraph(self.repo)
+            for claim in [c for c in claim_rows if eligible_claim(c)][:2]:
+                try:
+                    await graph.extract(claim.id, self.llm, self.cfg.agent.initial_focus)
+                except BudgetExceeded:
+                    raise
+                except (ValueError, TimeoutError) as exc:
+                    log.warning("概念关系提议未通过/不可用：%s", type(exc).__name__)
+            mastery = await configured_mastery(self.repo)
+            for root in await graph.goal_roots(goal):
+                quota = await self.repo.goal_quota_remaining()
+                if quota > 0:
+                    await graph.queue(root.id, min(2, quota), mastery)
 
+        await self.repo.update_goal_status(
+            goal,
+            GoalStatus.PASSED if evaluation.passed else GoalStatus.FAILED,
+            evaluation.score,
+            max_retry=self.cfg.learning.max_retry,
+            attempt=learning_session,
+        )
         await self.repo.record_skill_outcome(
             [s.id for s in skills], evaluation.passed, learning_session
         )

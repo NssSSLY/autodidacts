@@ -19,6 +19,7 @@ from autodidact.brain.llm import build_llm
 from autodidact.brain.observed import ObservedLLM
 from autodidact.db import SessionLocal, engine
 from autodidact.goals.scorer import goal_score
+from autodidact.knowledge.graph import GraphQuery, RelationDraft, graph_action
 from autodidact.mastery import mastery_action
 from autodidact.metrics import dashboard
 from autodidact.repository import Repository
@@ -57,6 +58,15 @@ class MasteryRequest(BaseModel):
     limit: int = Field(default=3, ge=1, le=20, strict=True)
 
 
+class GraphWriteRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    concept_id: UUID | None = None
+    relation_id: UUID | None = None
+    claim_id: UUID | None = None
+    relation: RelationDraft | None = None
+    limit: int = Field(default=3, ge=1, le=20, strict=True)
+
+
 PAGE = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Autodidact 研究工作台</title>
 <style>body{font-family:system-ui;background:#f4f5f7;color:#18232d;max-width:1100px;margin:32px auto;padding:0 20px}
@@ -83,8 +93,12 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <select id="audit-limit" aria-label="每页数量"><option>20</option><option>10</option><option>50</option></select><button id="audit-search">查询 / 刷新列表</button></div>
 <p id="audit-message" role="status"></p><pre id="audit-budget"></pre><div id="audit-list"></div><nav class="row"><button id="audit-prev">上一页</button><button id="audit-next">下一页</button></nav>
 <div id="audit-detail" hidden><hr><h2 id="audit-detail-title"></h2><button id="audit-back">返回上一条详情</button><p id="audit-detail-message" role="status"></p><nav class="row" id="audit-parts"></nav><div id="audit-data"></div><div id="audit-items"></div><nav class="row" id="audit-detail-pages"></nav><h3>关联追溯</h3><div class="row" id="audit-references"></div></div></section>
+<section><h2>概念关系与前置知识</h2><p>只读查看当前关系/原范围/支持/历史，不调用模型。关系不是因果证明；仅supported的requires可排有限前置调查目标，不自动开始研究。模型提取/复核需在CLI显式授权。</p><input id="graph-concept" placeholder="概念UUID（留空查看第一页）"><input id="graph-relation" placeholder="关系UUID（查看详情/历史时填写，概念留空）"><input id="graph-offset" type="number" min="0" max="10000" value="0" placeholder="offset"><div class="row"><button id="graph-show">只读查看</button><button id="graph-refresh">保存当前关系状态</button><button id="graph-queue">仅排前置调查目标</button></div><pre id="graph-status"></pre></section>
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||JSON.stringify(x));return x;}
+// 功能：图谱仅发送固定站内查询/快照/前置排队动作，使用纯文本展示证据及截断标记，不自动付费。
+async function graphAction(action){try{let concept=document.getElementById('graph-concept').value.trim(),relation=document.getElementById('graph-relation').value.trim();let query=new URLSearchParams({offset:document.getElementById('graph-offset').value||'0'});if(concept)query.set('concept_id',concept);if(relation)query.set('relation_id',relation);let result=action==='show'?await api('/api/graph?'+query):await api('/api/graph/'+action,action==='queue'?{concept_id:concept}:{relation_id:relation});show('graph-status',result);}catch(e){show('graph-status',e.message);}}
+for(let action of ['show','refresh','queue'])document.getElementById('graph-'+action).onclick=()=>graphAction(action);
 async function refresh(){try{let s=await api('/api/state');for(let id of ['goals','beliefs','disputes','reports'])show(id,s[id]);show('status',{metrics:s.metrics,job:s.job});}catch(e){show('status',e.message);}}
 // 功能：索引控制只提交固定站内操作，后台调用有界；返回数据使用纯文本，不执行外部文字。
 async function indexAction(action){try{let id=document.getElementById('index-id').value.trim();let path=action==='create'||action==='legacy'?'/api/retrieval-jobs/'+action:'/api/retrieval-jobs/'+encodeURIComponent(id)+'/'+action;let result=await api(path,{});if(result.job_id)document.getElementById('index-id').value=result.job_id;show('index-status',result);}catch(e){show('index-status',e.message);}}
@@ -171,6 +185,41 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/graph" or path.startswith("/api/graph/"):
+            if path == "/api/graph" and method == "GET" and not body:
+                parameters = parse_qs(parsed.query, keep_blank_values=True)
+                if any(len(v) != 1 for v in parameters.values()):
+                    raise ValueError("图谱参数不得重复")
+                query = GraphQuery.model_validate({k: v[0] for k, v in parameters.items()})
+                result = await graph_action(engine, "show", query=query)
+            elif (
+                path in {"/api/graph/propose", "/api/graph/refresh", "/api/graph/queue"}
+                and method == "POST"
+                and not parsed.query
+            ):
+                request = GraphWriteRequest.model_validate(body)
+                action = path.rsplit("/", 1)[1]
+                expected = {
+                    "propose": {"claim_id", "relation"},
+                    "refresh": {"relation_id"},
+                    "queue": {"concept_id", "limit"},
+                }[action]
+                if request.model_fields_set - expected or any(
+                    getattr(request, k) is None for k in expected - {"limit"}
+                ):
+                    raise ValueError("图谱动作缺少或包含不适用字段")
+                result = await graph_action(
+                    engine,
+                    action,
+                    query=GraphQuery(relation_id=request.relation_id),
+                    concept_id=request.concept_id,
+                    limit=request.limit,
+                    claim_id=request.claim_id,
+                    draft=request.relation,
+                )
+            else:
+                raise ValueError("未知图谱动作/方法")
+            return bounded_display({"data": result})
         if path == "/api/mastery" or path.startswith("/api/mastery/"):
             if path == "/api/mastery" and method == "GET" and not body:
                 parameters = parse_qs(parsed.query, keep_blank_values=True)

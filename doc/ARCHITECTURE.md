@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-20；最新含F09主题掌握/缺口基础机制，之前证据/争议、F01–F08增量保留，schema HEAD为20261013_0009。技术/约束/开发入口已移入doc/，根AGENTS仅为上下文入口。F09按用户要求未运行测试，不用历史回归证明新代码；本文不替代[实现/缺口对照](03现有能力与实现对照.md)或[原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-21；最新F10概念关系/前置调查基础机制，schema HEAD `20261021_0010` /22业务表。技术/约束/开发入口沿doc/位置，根AGENTS为上下文入口。F09/F10按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–21节增量索引覆盖业务src/migrations/scripts/tests中的 **130个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
+以下逐文件索引及第18–22节增量索引覆盖业务src/migrations/scripts/tests中的 **133个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
 
-每个业务Python文件首部有中文“文件职责”；全部 **986个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独为80文件/498方法。历史注释整理保留原行为，后续功能增量见第11–21节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件首部有中文“文件职责”；全部 **1014个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独82文件/524方法。历史注释整理保留原行为，增量见第11–22节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -58,7 +58,7 @@ CLI / 本地 Workbench
 | [src/autodidact/memory.py](../src/autodidact/memory.py) | 按日整合接纳记忆、失败模式与证据图，提出复核目标和候选研究技能。 | `MemoryConsolidator.consolidate` |
 | [src/autodidact/metrics.py](../src/autodidact/metrics.py) | 提供数据库状态计数与学习/信念比例，不将数量当成智能提升证明。 | `dashboard`、`dashboard.count` |
 | [src/autodidact/migrations.py](../src/autodidact/migrations.py) | 识别已知旧库结构并串行 Alembic 升级，拒绝不完整或未知状态的自动 stamp。 | `alembic_config`、`expected_schema_columns`、`baseline_schema_columns`、`operational_schema_columns`、其余见代码内注释 |
-| [src/autodidact/models.py](../src/autodidact/models.py) | 定义 20 个持久业务表、外键、唯一约束和向量字段。 | `uuid_pk` |
+| [src/autodidact/models.py](../src/autodidact/models.py) | 定义22个持久业务表及外键/唯一键/方向检查/向量字段。 | `uuid_pk`、`Concept`、`KnowledgeRelation` |
 | [src/autodidact/normalization.py](../src/autodidact/normalization.py) | 集中规范文本与计算稳定摘要，统一目标去重和认识论幂等键。 | `normalize_text_key`、`stable_key`、`claim_statement_key` |
 | [src/autodidact/provider_runtime.py](../src/autodidact/provider_runtime.py) | F06统一失败分类、退避/Retry-After/限时、持久熔断/单探针租约与脱敏健康查询，不改认知信度。 | `ProviderRuntime.run`、`acquire`、`finish`、`HealthStore.edit`、`classify_failure`、`provider_health` |
 | [src/autodidact/reporting.py](../src/autodidact/reporting.py) | 汇总指定时间窗的闭卷趋势、资源用量、错误及冻结实验报告。 | `longitudinal_report` |
@@ -206,7 +206,7 @@ CLI / 本地 Workbench
 
 ## 4. 持久数据模型
 
-共 20 个业务表，另有 Alembic 版本表：
+共22个业务表，另有Alembic版本表：
 
 | 分组 | 表 | 作用 |
 | --- | --- | --- |
@@ -220,6 +220,7 @@ CLI / 本地 Workbench
 | 模型经验 | model_observations、model_profiles | 请求/输出/错误/时延/usage 与统计汇总 |
 | 预算/报告 | operation_events、research_reports | 资源预留/实耗、冻结快照与研究/成长报告 |
 | 派生召回 | retrieval_entries、retrieval_vectors | 实时关键词/旧指纹向量；版本化候选向量、摘要、工作状态/次数，活动指针存报告 |
+| 概念/关系 | concepts、knowledge_relations | 领域+标签身份、方向/谓词/原Claim及scope；观察与快照头存assessment，历史复用不可变报告，非第二真值库 |
 
 Goal 是意图，Claim 是待核验提议，Belief 是带状态的接纳结论；检索相关性不赋予任何事实等级。四记忆类型通过上述记录映射，不代表已实现四套完整独立记忆系统。
 
@@ -465,3 +466,21 @@ knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普�
 写旁路：显式snapshot → ResearchReport(kind=mastery_profile, protocol=topic_mastery_v1)不可变，依据摘要/UTC日稳定键复用；显式queue或已开启MASTERY的普通空池 → 原控制器锁/配额/去重 → source=knowledge_gap目标 → 原研究流程。只传中性主题及泛化学习描述，题面/答案/真值不进规划与目标；模板标签仍不可信，语义泄漏不能靠结构排除。已有终态触发不清零重试，新建limit不被旧目标占用。
 
 最多100报告/500信念/1000条支持或反对证据边；有效attack即使未形成Dispute也作为negative_evidence复习线索，来源/信念/支持和反对观察均保存引用/摘要，不改旧结论。声明覆盖仅该题集held-out题，不是全领域；暂定掌握门槛未实证校准，质量/语义/专家不认证，也不是因果成长或模型参数学习。复用20表/0009，无新依赖/回填；F09未构建EXE。按用户功能优先仅编译/Ruff/CLI帮助/JS语法及文档/注释核对，pytest和数据库/效果测试留V21；历史第9–20节不替代F09证据。
+
+## 22. F10：概念关系与前置调查
+
+| 新文件 | 职责/关键入口 |
+| --- | --- |
+| [knowledge/graph.py](../src/autodidact/knowledge/graph.py) | RelationDraft/GraphQuery等严格协议；concept_key/relation_basis固定身份；KnowledgeGraph.concept/propose唯一候选、anchors/review逐引文关系核对、effective当前门控、snapshot不可变历史、extract有限提议、view只读分页、goal_roots/planning_context字面根和规划、prerequisites/queue有界依赖调查；graph_action统一只读/持锁无模型动作 |
+| [graph_commands.py](../src/autodidact/graph_commands.py) | register_graph_commands六CLI；model_graph_action持锁/ObservedLLM/预算，提取或重核需显式allow-model，不隐式迁移 |
+| [20261021_0010_knowledge_relations.py](../migrations/versions/20261021_0010_knowledge_relations.py) | upgrade仅新增concepts/knowledge_relations及唯一/方向/谓词/查询索引，downgrade删新表但保留旧20表及历史报告，存在新数据损失 |
+
+模型把概念作为领域+规范标签实体、关系作为带原Claim/scope的断言，不强迫一个全局真值边。原文仍在Source，关系支持复用ClaimEvidence；模型方向/直接关系/范围核对只记录0级观察，当前supported须原Claim已接纳为同句supported/verified Belief、至少2个等级≥2且满足配置的独立来源、来源上下文和完整文字摘要与核验时一致、原scope完整、无开放争议/有效反对/截断。状态candidate/supported/disputed/weakened不是模型可信百分比，causes不做传递推断或因果认证。
+
+报告knowledge_relation_history用不可变save_report保存当前状态/证据和previous_report_id，稳定键包含上个历史头与新依据；关系assessment保存最近模型观察、basis和历史头。写阶段commit失败重试可复用已保存报告，读GET/CLI只动态重算，不自动保存状态或修改Belief/Dispute；原四结果门控保持。propose只候选，extract/review才显式模型核验；失败unknown、预算/取消传播，数据库错误不降成无账本请求。
+
+前置路径：当前supported requires的subject→object，最多200边、6深、100展开路径，环/截断拒排，不写新传递事实；每个目标保存原边/Claim/范围路径，未知只建议调查学习必要性。每日配额与控制器锁沿用、稳定触发对所有终态去重、可选metadata与新Goal/索引同事务。F09只使用显式范围/组的精确主题观察，不带题面/答案，领域映射不认证。
+
+修改入口：agent.py在显式KNOWLEDGE_GRAPH_ENABLED下加签名、冻结有限相邻观察、每轮最多2主张提取/核验、空池首requires根/收尾排目标；默认关闭保留旧签名，不回填旧主张。workbench.py新增严格GET /api/graph、POST propose/refresh/queue及纯文本区；GET独立REPEATABLE READ READ ONLY、SQL5秒/整体20秒，写动作原controller_lock/30秒，无模型；模型只在CLI确认或显式开关的普通学习中运行。query/未知/重复字段拒绝，保留原Host/Origin/Token/CSP/有界展示。
+
+0010新增两表，总22，migrations.py补0009识别，backups按元数据自动纳入新表；test_backups既有库存硬编码改动态期望（未运行）。新旧版本不混跑，旧F08 EXE不含F09/F10；先用旧版本备份再迁移，回退/新表损失见迁移第11节。本轮只静态/编译/帮助/JS语法与文档核对，未执行pytest/真实库/模型/浏览器效果，留V22。下一F13，不展开Neo4j、大库公平排课、全自动世界/因果推理或自主核心代码修改。

@@ -98,7 +98,7 @@ async def pg_process(name, args, env, *, output=None, timeout=600):
                 await process.wait()
 
 
-# 功能：在同一只读快照下按主键流式核对20个业务表的行数/规范JSON摘要，不读取整库到内存。
+# 功能：在同一只读快照下按主键流式核对当前schema全部业务表的行数/规范JSON摘要，不整库加载。
 async def database_inventory(connection):
     readiness = await database_readiness(connection)
     if not readiness["ready"]:

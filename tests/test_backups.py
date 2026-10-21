@@ -111,7 +111,7 @@ async def test_backup_snapshot_manifest_and_no_overwrite(offline, tmp_path):
     engine, path = Engine(), tmp_path / "backup.dump"
     result = await backups.backup_database(engine, path)
     payload = backups.verify_backup(path)
-    assert result["tables"] == 20 and payload["revision"] == HEAD_REVISION
+    assert result["tables"] == len(expected_schema_columns()) and payload["revision"] == HEAD_REVISION
     assert payload["archive"] == file_digest(path) and all(
         v["rows"] == 1 for v in payload["tables"].values()
     )
@@ -195,7 +195,7 @@ def test_restore_target_guard(target, confirmed):
         backups.validate_restore_target(SOURCE, target, confirmed)
 
 
-# 功能：新空库恢复使用单事务/无clean，并复核20表内容；非空库/摘要不符不覆盖原库或自动清理。
+# 功能：新空库恢复使用单事务/无clean，按当前schema复核内容；非空库/摘要不符不覆盖或自动清理。
 @pytest.mark.parametrize("case", ["success", "nonempty", "mismatch"])
 async def test_restore_new_empty_target_only(offline, tmp_path, monkeypatch, case):
     path = tmp_path / "x.dump"

@@ -89,12 +89,14 @@ class Repository(LearningState):
         goal, _ = await self.add_goal_if_absent(g, score, parent_goal_id)
         return goal
 
-    # 功能：规范化标题去重活动目标，新增时保存父目标与评分并同步关键词索引，返回目标及是否新建。
+    # 功能：规范化标题去重活动目标，新增时原子保存父目标/评分/可选出处metadata及索引，返回创建标记。
     async def add_goal_if_absent(
         self,
         g: CandidateGoal,
         score: float,
         parent_goal_id: UUID | None = None,
+        *,
+        metadata: dict | None = None,
     ) -> tuple[models.Goal, bool]:
         q = await self.s.execute(
             select(models.Goal).where(models.Goal.status.in_(_ACTIVE_GOAL_STATUSES))
@@ -110,6 +112,7 @@ class Repository(LearningState):
             description=g.description,
             status=GoalStatus.DISCOVERED,
             source=g.source,
+            metadata_json=metadata or {},
             importance=g.importance,
             uncertainty=g.uncertainty,
             novelty=g.novelty,

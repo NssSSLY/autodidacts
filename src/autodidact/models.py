@@ -1,4 +1,4 @@
-# 文件职责：定义 20 个持久业务表、外键、唯一约束和向量字段。
+# 文件职责：定义22个持久业务表、外键、唯一约束和向量字段；概念关系不替代信念真值。
 from __future__ import annotations
 
 from datetime import datetime
@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -217,6 +218,44 @@ class BeliefHistory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class Concept(Base):
+    __tablename__ = "concepts"
+    id: Mapped[UUID] = uuid_pk()
+    concept_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    domain: Mapped[str] = mapped_column(String(200), nullable=False)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class KnowledgeRelation(Base):
+    __tablename__ = "knowledge_relations"
+    __table_args__ = (
+        CheckConstraint("subject_id <> object_id", name="ck_relation_distinct_concepts"),
+        CheckConstraint(
+            "predicate IN ('is_a','part_of','requires','causes','contradicts','supports',"
+            "'example_of','used_for','related_to')",
+            name="ck_relation_predicate",
+        ),
+        Index("ix_relation_subject", "subject_id", "predicate"),
+        Index("ix_relation_object", "object_id", "predicate"),
+    )
+    id: Mapped[UUID] = uuid_pk()
+    relation_key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("concepts.id"), nullable=False
+    )
+    object_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("concepts.id"), nullable=False
+    )
+    predicate: Mapped[str] = mapped_column(String(30), nullable=False)
+    claim_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("claims.id"), nullable=False
+    )
+    scope: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    assessment: Mapped[dict] = mapped_column(JSONB, default=dict, server_default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Skill(Base):
     __tablename__ = "skills"
     id: Mapped[UUID] = uuid_pk()
@@ -368,13 +407,21 @@ class RetrievalEntry(Base):
 class RetrievalVector(Base):
     __tablename__ = "retrieval_vectors"
     __table_args__ = (
-        UniqueConstraint("generation_id", "entity_kind", "entity_id", name="uq_retrieval_vector_item"),
+        UniqueConstraint(
+            "generation_id", "entity_kind", "entity_id", name="uq_retrieval_vector_item"
+        ),
         Index("ix_retrieval_vector_work", "generation_id", "status"),
-        Index("ix_retrieval_vector_cosine", "embedding", postgresql_using="hnsw",
-              postgresql_ops={"embedding": "vector_cosine_ops"}),
+        Index(
+            "ix_retrieval_vector_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
     id: Mapped[UUID] = uuid_pk()
-    generation_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), ForeignKey("research_reports.id"), nullable=False)
+    generation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("research_reports.id"), nullable=False
+    )
     entity_kind: Mapped[str] = mapped_column(String(20), nullable=False)
     entity_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64))
