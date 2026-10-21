@@ -11,6 +11,7 @@ from autodidact import models
 from autodidact.knowledge.belief_review import queue_stale_reviews
 from autodidact.learning.evaluation_contracts import SkillDrafts
 from autodidact.learning.ground_truth import evaluation_groups
+from autodidact.lifecycle import MemoryLifecycle
 from autodidact.mastery import configured_mastery
 from autodidact.normalization import normalize_text_key
 
@@ -20,7 +21,7 @@ class MemoryConsolidator:
     def __init__(self, repo, llm):
         self.repo, self.llm = repo, llm
 
-    # 功能：按UTC日幂等整合、复核排队/候选方法与可选F09画像；旧mastery计数字段保留但明确非掌握度。
+    # 功能：新UTC日整合active记忆/候选方法与维护建议；只生成F13提议，旧同日报告不回写。
     async def consolidate(self):
         day = datetime.now(UTC).date().isoformat()
         existing = await self.repo.get_report("memory_daily", day)
@@ -59,6 +60,9 @@ class MemoryConsolidator:
             ]
         )
         review_goals = await queue_stale_reviews(self.repo)
+        lifecycle_suggestions = {
+            kind: await MemoryLifecycle(self.repo).suggest(kind, 3) for kind in ("belief", "skill")
+        }
         successes = [s for s in sessions if s.success and (s.reflection or {}).get("lessons")]
         created = []
         if len(successes) >= 3:
@@ -164,6 +168,7 @@ class MemoryConsolidator:
             "failure_patterns": dict(failures),
             "candidate_skill_ids": created,
             "belief_review_goal_ids": review_goals,
+            "memory_lifecycle_suggestions": lifecycle_suggestions,
             "graph": {"nodes": graph_nodes, "edges": graph_edges},
             "note": "旧mastery/topic_inventory只是信念数量，不是掌握度；F09画像来自既有可靠答卷/证据，无历史则未知，主题共现不是因果。",
         }

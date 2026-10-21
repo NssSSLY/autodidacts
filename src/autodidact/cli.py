@@ -19,6 +19,7 @@ from autodidact.db import SessionLocal, engine, init_database
 from autodidact.experiments import freeze_suite
 from autodidact.graph_commands import register_graph_commands
 from autodidact.learning.reliable_evaluation import run_benchmark
+from autodidact.lifecycle_commands import register_lifecycle_commands
 from autodidact.mastery_commands import register_mastery_commands
 from autodidact.metrics import dashboard
 from autodidact.retrieval_job_commands import register_retrieval_commands
@@ -34,6 +35,7 @@ register_belief_audit_commands(app)
 register_service_commands(app)
 register_mastery_commands(app)
 register_graph_commands(app)
+register_lifecycle_commands(app)
 
 
 # 功能：按 LOG_LEVEL 设置标准日志格式，供学习进程输出阶段与错误。

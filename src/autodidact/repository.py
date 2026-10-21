@@ -534,17 +534,18 @@ class Repository(LearningState):
             "note": "书目为未认证声明；旧记录未知不猜测回填，当前正文门控不等于改写历史信念",
         }
 
-    # 功能：读取最新非撤回信念，作为无需向量的兼容记忆入口。
+    # 功能：读取active且未撤回的近期信念；归档仍留审计/冲突旁路，不参与默认规划。
     async def recent_beliefs(self, limit: int = 30) -> list[models.Belief]:
         q = await self.s.execute(
             select(models.Belief)
             .where(models.Belief.status != BeliefStatus.RETRACTED)
+            .where(models.Belief.lifecycle_state == "active")
             .order_by(desc(models.Belief.updated_at))
             .limit(limit)
         )
         return list(q.scalars())
 
-    # 功能：按 pgvector 余弦距离召回有向量的非撤回信念，供兼容调用及检索使用。
+    # 功能：按pgvector召回active且未撤回的兼容记忆；旧向量保留，归档不进入默认结果。
     async def semantic_beliefs(
         self, embedding: list[float], limit: int = 30, *, fingerprint: str | None = None
     ) -> list[models.Belief]:
@@ -552,6 +553,7 @@ class Repository(LearningState):
         q = await self.s.execute(
             select(models.Belief)
             .where(models.Belief.status != BeliefStatus.RETRACTED)
+            .where(models.Belief.lifecycle_state == "active")
             .where(models.Belief.embedding.is_not(None))
             .where(
                 models.Belief.metadata_json["embedding_fingerprint"].astext == fingerprint
@@ -575,18 +577,19 @@ class Repository(LearningState):
             }
         await self.s.commit()
 
-    # 功能：按主题文本匹配读取非撤回信念，用于旧式主题召回。
+    # 功能：按主题读取active且未撤回信念，归档不参与默认旧式主题召回。
     async def beliefs_for_topic(self, topic: str, limit: int = 10) -> list[models.Belief]:
         q = await self.s.execute(
             select(models.Belief)
             .where(models.Belief.topic.ilike(f"%{topic}%"))
             .where(models.Belief.status != BeliefStatus.RETRACTED)
+            .where(models.Belief.lifecycle_state == "active")
             .order_by(desc(models.Belief.confidence))
             .limit(limit)
         )
         return list(q.scalars())
 
-    # 功能：由已批准的 Claim 创建或更新信念，保存分数、来源数和历史，并防止重复重放变更。
+    # 功能：从已批准主张幂等晋升，优先复用active同句；归档同句不自动复活，旧证据/历史仍保留。
     async def create_belief_from_claim(
         self,
         claim: models.Claim,
@@ -599,7 +602,13 @@ class Repository(LearningState):
         if not eligible_claim(claim):
             raise ValueError("复合或结构未通过复核的主张不能直接晋升，需分别核验子主张")
         q = await self.s.execute(
-            select(models.Belief).where(models.Belief.status != BeliefStatus.RETRACTED)
+            select(models.Belief)
+            .where(models.Belief.status != BeliefStatus.RETRACTED)
+            .order_by(
+                (models.Belief.lifecycle_state == "active").desc(),
+                models.Belief.created_at,
+                models.Belief.id,
+            )
         )
         statement_key = normalize_text_key(claim.statement)
         for existing in q.scalars():
@@ -817,6 +826,9 @@ class Repository(LearningState):
             "status": belief.status,
             "confidence": belief.confidence,
             "scope": (belief.metadata_json or {}).get("claim_scope", {}),
+            "lifecycle_state": belief.lifecycle_state,
+            "lifecycle_version": belief.lifecycle_version,
+            "canonical_id": str(belief.canonical_id) if belief.canonical_id else None,
             "latest_review": (belief.metadata_json or {}).get("latest_evidence_review", {}),
             "latest_review_attempt": (belief.metadata_json or {}).get(
                 "latest_evidence_review_attempt", {}

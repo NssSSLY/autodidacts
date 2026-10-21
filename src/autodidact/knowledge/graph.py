@@ -316,7 +316,7 @@ class KnowledgeGraph:
         await self.snapshot(relation)
         return await self.effective(relation)
 
-    # 功能：动态重算关系状态，质量变化/开放争议/撤回即降级；不改信念、评分或争议四结果。
+    # 功能：只用active接纳信念支撑当前关系，归档不隐藏冲突；动态降级不改真值/评分或四结果。
     async def effective(self, relation):
         claim = await self.s.get(models.Claim, relation.claim_id)
         subject = await self.s.get(models.Concept, relation.subject_id)
@@ -411,6 +411,7 @@ class KnowledgeGraph:
             b
             for b in beliefs[:20]
             if b.status in {"supported", "verified"}
+            and b.lifecycle_state == "active"
             and normalize_text_key(b.statement) == normalize_text_key(claim.statement)
         ]
         state, reason = "candidate", "关系仍是提议或缺少已接纳主张/独立原文支持"
@@ -454,7 +455,13 @@ class KnowledgeGraph:
             "claim_evidence": [a[2] for a in anchors],
             "approved_anchor_ids": [a[2]["anchor_id"] for a in accepted],
             "beliefs": [
-                {"id": str(b.id), "status": b.status, "statement_sha256": digest(b.statement)}
+                {
+                    "id": str(b.id),
+                    "status": b.status,
+                    "statement_sha256": digest(b.statement),
+                    "lifecycle_state": b.lifecycle_state,
+                    "lifecycle_version": b.lifecycle_version,
+                }
                 for b in beliefs[:20]
             ],
             "dispute_ids": [str(d.id) for d in disputes[:20]],

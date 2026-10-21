@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from itertools import islice
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -36,6 +37,7 @@ class AuditQuery(BaseModel):
     state: str = Field(default="", max_length=50)
     part: str = Field(default="", max_length=30)
     text_offset: int = Field(default=0, ge=0, le=2000000)
+    lifecycle: Literal["active", "archived", "all"] = "all"
 
 
 # 功能：从显式字段生成详情字典，不导出向量、密钥配置或任意ORM属性。
@@ -118,7 +120,7 @@ class CognitiveAudit:
             "offset_cap": 10000,
         }
 
-    # 功能：列出包含撤回/争议/已决议的认知记录，文字过滤是SQL字面量检索，不计算嵌入。
+    # 功能：审计默认保留归档/撤回/争议，可显式筛生命周期，不调用模型或修改可见性。
     async def listing(self, kind, query):
         if kind not in KINDS or query.part or query.text_offset:
             raise ValueError("未知审计类型或列表参数")
@@ -126,7 +128,7 @@ class CognitiveAudit:
         names = {
             "sources": "title url quality_class",
             "claims": "statement topic",
-            "beliefs": "statement topic status confidence",
+            "beliefs": "statement topic status confidence lifecycle_state lifecycle_version canonical_id",
             "disputes": "status resolution_notes contradiction_score",
             "reports": "kind report_key",
             "operations": "resource status reserved actual",
@@ -141,6 +143,10 @@ class CognitiveAudit:
         }
         columns = [getattr(model, n) for n in searchable.get(kind, names.split()[0]).split()]
         statement = select(model)
+        if query.lifecycle != "all":
+            if kind != "beliefs":
+                raise ValueError("生命周期审计筛选仅用于beliefs；技能用维护审计入口")
+            statement = statement.where(models.Belief.lifecycle_state == query.lifecycle)
         if query.q:
             statement = statement.where(
                 or_(*(c.icontains(query.q, autoescape=True) for c in columns))
@@ -201,7 +207,7 @@ class CognitiveAudit:
 
     # 功能：读取详情和指定关联分页；只复用库内证据/历史，不联网重核或触发调查。
     async def detail(self, kind, entity_id, query):
-        if kind not in KINDS or query.q or query.state:
+        if kind not in KINDS or query.q or query.state or query.lifecycle != "all":
             raise ValueError("未知审计类型或详情参数")
         row = await self.s.get(KINDS[kind], entity_id)
         if row is None:

@@ -144,7 +144,23 @@ class ClaimEvidence(Base):
 
 class Belief(Base):
     __tablename__ = "beliefs"
+    __table_args__ = (
+        CheckConstraint("lifecycle_state IN ('active','archived')", name="ck_belief_lifecycle"),
+        CheckConstraint("lifecycle_version >= 0", name="ck_belief_lifecycle_version"),
+        CheckConstraint(
+            "canonical_id IS NULL OR (canonical_id <> id AND lifecycle_state = 'archived')",
+            name="ck_belief_canonical",
+        ),
+        Index("ix_belief_lifecycle", "lifecycle_state", "id"),
+    )
     id: Mapped[UUID] = uuid_pk()
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active"
+    )
+    lifecycle_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    canonical_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("beliefs.id", name="fk_belief_canonical")
+    )
     topic: Mapped[str] = mapped_column(Text, nullable=False)
     statement: Mapped[str] = mapped_column(Text, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text)
@@ -258,7 +274,23 @@ class KnowledgeRelation(Base):
 
 class Skill(Base):
     __tablename__ = "skills"
+    __table_args__ = (
+        CheckConstraint("lifecycle_state IN ('active','archived')", name="ck_skill_lifecycle"),
+        CheckConstraint("lifecycle_version >= 0", name="ck_skill_lifecycle_version"),
+        CheckConstraint(
+            "canonical_id IS NULL OR (canonical_id <> id AND lifecycle_state = 'archived')",
+            name="ck_skill_canonical",
+        ),
+        Index("ix_skill_lifecycle", "lifecycle_state", "id"),
+    )
     id: Mapped[UUID] = uuid_pk()
+    lifecycle_state: Mapped[str] = mapped_column(
+        String(20), default="active", server_default="active"
+    )
+    lifecycle_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    canonical_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("skills.id", name="fk_skill_canonical")
+    )
     name: Mapped[str] = mapped_column(String(250), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     trigger_condition: Mapped[str | None] = mapped_column(Text)

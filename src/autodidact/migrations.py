@@ -16,7 +16,8 @@ from autodidact.config import runtime_settings
 from autodidact.db import Base
 from autodidact.resources import resource_root
 
-HEAD_REVISION = "20261021_0010"
+HEAD_REVISION = "20261021_0011"
+GRAPH_REVISION = "20261021_0010"
 VECTOR_REVISION = "20261013_0009"
 REVIEW_REVISION = "20261003_0008"
 STRUCTURE_REVISION = "20261003_0007"
@@ -53,6 +54,7 @@ MigrationAction = Literal[
     "stamp_structure_then_upgrade",
     "stamp_review_then_upgrade",
     "stamp_vector_then_upgrade",
+    "stamp_graph_then_upgrade",
     "stamp_head",
 ]
 
@@ -83,11 +85,19 @@ def baseline_schema_columns() -> dict[str, set[str]]:
     return baseline
 
 
+# 功能：扣除0011生命周期列，识别完整0010旧结构；旧记录由迁移默认active，不伪造归档。
+def graph_schema_columns() -> dict[str, set[str]]:
+    columns = expected_schema_columns()
+    for table in ("beliefs", "skills"):
+        columns[table].difference_update({"lifecycle_state", "lifecycle_version", "canonical_id"})
+    return columns
+
+
 # 功能：扣除0010概念/关系表，识别完整0009旧结构，不伪造关系回填。
 def vector_schema_columns() -> dict[str, set[str]]:
     return {
         name: columns
-        for name, columns in expected_schema_columns().items()
+        for name, columns in graph_schema_columns().items()
         if name not in {"concepts", "knowledge_relations"}
     }
 
@@ -173,6 +183,8 @@ def decide_initialization_action(
     }
     if actual == expected:
         return "stamp_head"
+    if actual == graph_schema_columns():
+        return "stamp_graph_then_upgrade"
     if actual == vector_schema_columns():
         return "stamp_vector_then_upgrade"
     if actual == review_schema_columns():
@@ -248,6 +260,8 @@ def _run_upgrade(connection: Connection, config: Config) -> None:
         command.stamp(config, REVIEW_REVISION)
     elif action == "stamp_vector_then_upgrade":
         command.stamp(config, VECTOR_REVISION)
+    elif action == "stamp_graph_then_upgrade":
+        command.stamp(config, GRAPH_REVISION)
     elif action == "stamp_head":
         command.stamp(config, "head")
     command.upgrade(config, "head")

@@ -142,7 +142,7 @@ async def historical_runs(repo, frozen, suite, now):
     return sorted(valid.values(), key=lambda r: (r["at"], r["id"])), rejected, truncated
 
 
-# 功能：精确按category匹配当前Belief.topic，复用正文质量/血缘独立性；截断或缺证据不宣称认知已覆盖。
+# 功能：当前覆盖只用active信念，归档冲突/反对仍保留风险计数，防通过归档制造掌握提升。
 async def knowledge_context(repo, topics):
     beliefs = list(
         (
@@ -229,7 +229,11 @@ async def knowledge_context(repo, topics):
             b for b in beliefs if b.topic == topic and b.status not in {"retracted", "weakened"}
         ]
         accepted = [
-            b for b in rows if b.status in {"supported", "verified"} and b.id not in disputed
+            b
+            for b in rows
+            if b.status in {"supported", "verified"}
+            and b.id not in disputed
+            and b.lifecycle_state == "active"
         ]
         qualified = []
         for belief in accepted:
@@ -260,7 +264,9 @@ async def knowledge_context(repo, topics):
             for b in rows
         )
         results[topic] = {
-            "active_beliefs": len(rows),
+            "active_beliefs": sum(b.lifecycle_state == "active" for b in rows),
+            "retained_beliefs": len(rows),
+            "archived_beliefs": sum(b.lifecycle_state == "archived" for b in rows),
             "accepted_beliefs": len(accepted),
             "qualified_beliefs": len(qualified),
             "qualified_belief_ids": qualified,
@@ -290,6 +296,8 @@ async def knowledge_context(repo, topics):
                     "belief_id": str(b.id),
                     "statement_sha256": digest(b.statement),
                     "status": b.status,
+                    "lifecycle_state": b.lifecycle_state,
+                    "lifecycle_version": b.lifecycle_version,
                     "has_open_dispute": b.id in disputed,
                 }
                 for b in rows
@@ -297,7 +305,7 @@ async def knowledge_context(repo, topics):
             "support_basis": [entry for b in accepted for entry in support_basis[b.id]],
             "attack_basis": [entry for b in rows for entry in attack_basis[b.id]],
             "complete": not truncated,
-            "note": "精确主题映射及既存支持摘录/当前质量/已知血缘观察，不重新认证语义支持或来源真实。",
+            "note": "只用active支持计算当前覆盖，归档的冲突/反对仍保留风险；不重写历史答卷或把归档当能力提升。",
         }
     return results, truncated
 

@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-21；最新F10概念关系/前置调查基础机制，schema HEAD `20261021_0010` /22业务表。技术/约束/开发入口沿doc/位置，根AGENTS为上下文入口。F09/F10按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求历史](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-21；最新F13维护/可恢复生命周期，schema HEAD `20261021_0011` /仍22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–22节增量索引覆盖业务src/migrations/scripts/tests中的 **133个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。独立开发辅助tools/codex-sync单列第16节，不纳入业务计数；每个文件单独列职责。
+以下逐文件索引及第18–23节增量索引覆盖业务src/migrations/scripts/tests中的 **136个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
 
-每个业务Python文件首部有中文“文件职责”；全部 **1014个显式方法/函数（含测试/私有方法/嵌套回调）**前有中文“功能”说明，src单独82文件/524方法。历史注释整理保留原行为，增量见第11–22节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件有中文“文件职责”；全部 **1035个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独84文件/543方法。增量见第11–23节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -214,9 +214,9 @@ CLI / 本地 Workbench
 | 情景记忆/续跑 | learning_sessions、learning_steps | 计划/结果/反思/尝试历史，成功工作项及输入键 |
 | 原文和来源 | sources、source_links | 提取文字、质量 metadata、依赖/引用关系 |
 | 候选及支持 | claims、claim_evidence | 主张/范围提议、原文片段、锚点/支持状态与范围覆盖审计 |
-| 接纳知识 | beliefs、evidence、belief_history | 状态/置信/向量、信念证据和每次变更历史 |
+| 接纳知识 | beliefs、evidence、belief_history | 真值状态/置信/向量、独立生命周期/归并显示、原信念证据及认识论/维护历史 |
 | 矛盾 | disputes | 旧状态、调查、决议与未解决状态 |
-| 评估/方法 | evaluations、skills | 分维度评估审计，研究步骤和验证 metadata |
+| 评估/方法 | evaluations、skills | 分维度评估/方法验证metadata，技能独立active/archived生命周期与可恢复分组 |
 | 模型经验 | model_observations、model_profiles | 请求/输出/错误/时延/usage 与统计汇总 |
 | 预算/报告 | operation_events、research_reports | 资源预留/实耗、冻结快照与研究/成长报告 |
 | 派生召回 | retrieval_entries、retrieval_vectors | 实时关键词/旧指纹向量；版本化候选向量、摘要、工作状态/次数，活动指针存报告 |
@@ -484,3 +484,25 @@ knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普�
 修改入口：agent.py在显式KNOWLEDGE_GRAPH_ENABLED下加签名、冻结有限相邻观察、每轮最多2主张提取/核验、空池首requires根/收尾排目标；默认关闭保留旧签名，不回填旧主张。workbench.py新增严格GET /api/graph、POST propose/refresh/queue及纯文本区；GET独立REPEATABLE READ READ ONLY、SQL5秒/整体20秒，写动作原controller_lock/30秒，无模型；模型只在CLI确认或显式开关的普通学习中运行。query/未知/重复字段拒绝，保留原Host/Origin/Token/CSP/有界展示。
 
 0010新增两表，总22，migrations.py补0009识别，backups按元数据自动纳入新表；test_backups既有库存硬编码改动态期望（未运行）。新旧版本不混跑，旧F08 EXE不含F09/F10；先用旧版本备份再迁移，回退/新表损失见迁移第11节。本轮只静态/编译/帮助/JS语法与文档核对，未执行pytest/真实库/模型/浏览器效果，留V22。下一F13，不展开Neo4j、大库公平排课、全自动世界/因果推理或自主核心代码修改。
+
+## 23. F13：独立可见性、维护提议与恢复
+
+| 新文件 | 职责/关键方法 |
+| --- | --- |
+| [lifecycle.py](../src/autodidact/lifecycle.py) | ChangeRequest/DecisionRequest/MaintenanceQuery严格输入；lifecycle_view独立可见性、lifecycle_epoch旧规划隔离、exact_duplicate仅文字/范围/状态等价；MemoryLifecycle.load按序锁/刷新、snapshot有界旧依据、validate转移/分组限制、propose不可变提议、decide原子决定/版本/历史/epoch、suggest有限规则、view只读现状/提议/历史/组成员；lifecycle_action统一只读或原控制器锁，无模型 |
+| [lifecycle_commands.py](../src/autodidact/lifecycle_commands.py) | register_lifecycle_commands注册memory-maintenance、suggest-memory、propose-memory-change、apply-memory-change、reject-memory-change；改变可见性须confirm，显示安全错误，不隐式迁移/研究 |
+| [20261021_0011_memory_lifecycle.py](../migrations/versions/20261021_0011_memory_lifecycle.py) | upgrade给Belief/Skill各加三列/检查/自FK/状态索引，旧active/0/null；downgrade丢可见性/分组但不删旧行，不能当安全恢复 |
+
+数据所有权：Belief.status/confidence/Evidence仍属原认识论规则；lifecycle_state/version/canonical_id仅属可见性维护。group不做语义改写或证据搬迁，而是源项archived+active代表指针；restore源项清指针。不同范围/状态或仅相似/矛盾不能group；有开放争议不能隐藏，目标不能归档/自指/串链，代表有成员时先恢复成员。
+
+事务：CLI/Web明确提议→snapshot冻结内容/范围/200条内证据与来源摘要/争议/单项版本，单快照≤2MiB→ResearchReport(kind=memory_change_proposal,sha256)不可变→用户指定ID/确认/声明actor/理由→原controller_lock→UUID顺序SELECT FOR UPDATE+populate_existing→当前快照重核→条件版本UPDATE且显式保留updated_at→BeliefHistory/不可变memory_change_decision→专用可变memory_lifecycle_epoch递增→一次commit。重试复用原决定，不覆盖反向选择；数据库失败不能绕过审计，提议/拒绝不改变epoch或实体。
+
+默认读者：learning_state.accepted_memory/selected_skills、repository兼容近期/主题/语义召回和HybridRetriever各通道过滤active；检索旧向量/关键词保留，不在维护时调用嵌入。agent._beliefs_for_claim显式include_archived=True维持原冲突保护；create_belief_from_claim优先复用active同句，否则重观测归档不复活。Claim/Source/会话/报告不在此生命周期范围，候选和历史仍可审计/召回，不当接纳事实。
+
+跨模块：mastery.knowledge_context仅active支持供当前覆盖，仍保留归档争议/负面与生命周期依据；graph.effective只用active接纳支持，原映射/来源不删，不借代表证据；belief_audit只冻结active且仅版本变化时扩旧快照身份；validate_skill拒归档，commands.skills展示全历史可见性；audit默认含归档且Belief列表可lifecycle筛选。metrics保留全历史验证比例，单列active/archived，不用隐藏记录制造进步。
+
+续跑：agent每轮读epoch，首次实际变更才在签名加协议/代数；无变更epoch=0保留旧签名。归档后再恢复仍加版本，旧规划/技能需人工restart，旧成功工作项/预算不删。日整合旧同日不回写，新日只保存每类3条维护建议；500项/5000对有限规则不是全库去重，过旧/相似仅review不直接apply。历史可靠实验保留冻结记忆/分数，不回填当前可见性。
+
+工作台专属维护GET /api/memory-maintenance独立READ ONLY/重复读/SQL5秒/整体20秒；POST严格suggest/propose/decide白名单，写锁/30秒，confirm严格布尔，沿Host/Origin/Token/CSP/纯文本与bounded_display。操作人是声明，不是生产认证；F05通用人工真值审批并未因此完成。详情可按UUID查提议/当前/事件/分组成员，分页/截断仍受限，只有人工明确确认才执行。
+
+0011仍22表/无新依赖，先用匹配旧版备份再显式迁移；新增默认列改变整行JSONhash，旧列保全与恢复见迁移12节/V23。旧F08 EXE不含F09/F10/F13，不混新库。按用户要求只静态/编译/5帮助/JS语法，未运行pytest/真实库/模型/浏览器效果或新包。下一F11；语义合并、成熟情景记忆归档、自动策略收益和大库公平扫描另行设计/验收。

@@ -177,7 +177,7 @@ class RetrievalHit:
     score: float
     ranks: dict
 
-    # 功能：展示召回实体、排序通道及主张范围；范围空值为未知，相关性不代表事实可信度。
+    # 功能：展示召回实体/范围/生命周期和排序通道；归档非判假，空范围未知，相关性不是事实可信度。
     def as_dict(self):
         return {
             "kind": self.kind,
@@ -190,6 +190,8 @@ class RetrievalHit:
             "claim_scope": getattr(self.row, "scope", None)
             or (getattr(self.row, "metadata_json", None) or {}).get("claim_scope", {}),
             "claim_structure": getattr(self.row, "structure", None) or {},
+            "lifecycle_state": getattr(self.row, "lifecycle_state", None) or "active",
+            "lifecycle_version": getattr(self.row, "lifecycle_version", None) or 0,
         }
 
 
@@ -198,24 +200,32 @@ class HybridRetriever:
     def __init__(self, repo, embedding=None):
         self.repo, self.s, self.embedding = repo, repo.s, embedding
 
-    # 功能：构造实体过滤条件；接纳记忆仅含无开放争议的 supported/verified 信念。
-    def eligible(self, kind, accepted_only):
+    # 功能：默认过滤归档信念；冲突保护可显式读历史，接纳记忆始终限active且无开放争议。
+    def eligible(self, kind, accepted_only, include_archived=False):
         if kind != "belief":
             return True
         belief = models.Belief
+        visibility = (
+            True if include_archived and not accepted_only else belief.lifecycle_state == "active"
+        )
         if not accepted_only:
-            return belief.status != "retracted"
+            return (belief.status != "retracted") & visibility
         disputed = exists(
             select(models.Dispute.id).where(
                 models.Dispute.belief_id == belief.id,
                 models.Dispute.status.in_(["open", "investigating", "unresolved"]),
             )
         )
-        return (belief.status.in_(["supported", "verified"])) & ~disputed
+        return (belief.status.in_(["supported", "verified"])) & ~disputed & visibility
 
-    # 功能：结合关键词和同指纹向量结果进行 RRF 排序；向量失败降级，相关性分数不代表事实可信度。
+    # 功能：关键词/向量/旧索引/回退统一生命周期过滤；仅冲突防护显式含归档，不删旧索引。
     async def retrieve(
-        self, query, kinds=("belief", "claim", "goal"), limit=20, accepted_only=False
+        self,
+        query,
+        kinds=("belief", "claim", "goal"),
+        limit=20,
+        accepted_only=False,
+        include_archived=False,
     ):
         if not query.strip() or not 1 <= limit <= 100:
             return []
@@ -265,7 +275,7 @@ class HybridRetriever:
 
         for kind in kinds:
             model = ENTITIES[kind]
-            eligibility = self.eligible(kind, accepted_only)
+            eligibility = self.eligible(kind, accepted_only, include_archived)
             entry = models.RetrievalEntry
             joined = (
                 select(model)

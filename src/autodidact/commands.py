@@ -203,10 +203,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
-    # 功能：列出已保存技能的名称、置信度、状态和验证 metadata。
+    # 功能：审计全部已保存技能的名称/状态/生命周期与验证metadata，归档仍可追溯。
     @app.command("skills")
     def skills():
-        # 功能：在受控数据库操作中列出已保存技能的名称、置信度、状态和验证 metadata。
+        # 功能：在受控数据库操作中审计全部技能的名称、置信度、状态/生命周期与验证metadata。
         async def action(repo, llm):
             rows = (
                 await repo.s.scalars(select(models.Skill).order_by(models.Skill.created_at.desc()))
@@ -217,6 +217,9 @@ def register_commands(app):
                     "name": s.name,
                     "confidence": s.confidence,
                     "metadata": s.metadata_json,
+                    "lifecycle_state": s.lifecycle_state,
+                    "lifecycle_version": s.lifecycle_version,
+                    "canonical_id": str(s.canonical_id) if s.canonical_id else None,
                 }
                 for s in rows
             ]

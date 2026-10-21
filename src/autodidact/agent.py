@@ -42,6 +42,7 @@ from autodidact.learning.ground_truth import CLOSED_BOOK_SCORING, CLOSED_BOOK_WE
 from autodidact.learning.planner import Planner
 from autodidact.learning.reflection import Reflector
 from autodidact.learning.synthesizer import Synthesizer
+from autodidact.lifecycle import LIFECYCLE_PROTOCOL, lifecycle_epoch
 from autodidact.mastery import (
     MASTERY_PROTOCOL,
     configured_mastery,
@@ -118,24 +119,25 @@ class AutonomousLearner:
         )
         self.current_goal = None
         self.current_attempt = None
+        self.lifecycle_revision = 0
         self.claim_support = ClaimSupportValidator()
 
         self.support_assessor = ClaimSupportAssessor(llm)
         self.decomposer = ClaimDecomposer(llm)
 
-    # 功能：混合召回与候选主张相关的非撤回旧信念，作为冲突比较对象，并缓存本尝试的召回结果。
+    # 功能：冲突保护显式召回含归档的未撤回旧信念，归档不能绕过高置信旧知识争议门控。
     async def _beliefs_for_claim(self, statement: str) -> list[models.Belief]:
         # 功能：查询主张相关的信念实体，转换为可持久重放的信念 ID 列表。
         async def recall():
             hits = await HybridRetriever(self.repo, self.embedding).retrieve(
-                statement, kinds=("belief",), limit=40
+                statement, kinds=("belief",), limit=40, include_archived=True
             )
             return [str(hit.row.id) for hit in hits]
 
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
-    # 功能：计算模型/核验/评分及目标协议签名；显式启用F09/F10时追加范围，默认保留旧签名。
+    # 功能：计算模型/证据/目标及可选F09/F10身份，实际维护后追加F13代数隔离旧规划；未变更保留旧签名。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
@@ -177,6 +179,8 @@ class AutonomousLearner:
                 digest(MEANINGS),
                 self.cfg.agent.initial_focus,
             ]
+        if getattr(self, "lifecycle_revision", 0):
+            value["memory_lifecycle"] = [LIFECYCLE_PROTOCOL, self.lifecycle_revision]
         return hashlib.sha256(
             json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
         ).hexdigest()
@@ -422,8 +426,9 @@ class AutonomousLearner:
                     max_retry=self.cfg.learning.max_retry,
                 )
 
-    # 功能：选取可恢复尝试或新目标，逐阶段研究、核证、评估和谨慎晋升，并保存结果与后续任务。
+    # 功能：先核对记忆可见性代数再选恢复/新目标；归档/恢复后旧规划不盲续跑，研究仍经原证据门控。
     async def _run_cycle(self) -> dict:
+        self.lifecycle_revision = await lifecycle_epoch(self.repo)
         learning_session = await self.repo.resumable_attempt()
         resuming = learning_session is not None
         if learning_session:
@@ -432,7 +437,7 @@ class AutonomousLearner:
                 return {
                     "status": "resume_incompatible",
                     "session_id": str(learning_session.id),
-                    "reason": "模型、学习策略、主张核验协议或目标已改变；请恢复原版本/配置或人工重启，不能混用旧结果",
+                    "reason": "模型、学习策略、记忆生命周期、主张核验协议或目标已改变；请人工核对/重启，不能混用旧结果",
                 }
         else:
             await self.ensure_goal_pool()

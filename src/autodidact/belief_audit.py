@@ -82,9 +82,9 @@ def read_manifest(path):
     return AuditManifest.model_validate(json.loads(raw.decode("utf-8-sig")))
 
 
-# 功能：只快照认知内容/评分/范围，不把后来的审计时间戳当旧结论改变，缺模型来源明确未知。
+# 功能：快照认知/范围；仅发生生命周期变更时附版本以阻断过期盲审，未变更旧快照保持兼容。
 def belief_snapshot(belief):
-    return {
+    value = {
         "id": str(belief.id),
         "statement": belief.statement,
         "topic": belief.topic,
@@ -99,6 +99,14 @@ def belief_snapshot(belief):
         ).model_dump(),
         "historical_model_identity": (belief.metadata_json or {}).get("model_identity"),
     }
+    if (getattr(belief, "lifecycle_version", None) or 0) or getattr(
+        belief, "lifecycle_state", "active"
+    ) == "archived":
+        value["memory_lifecycle"] = {
+            "state": belief.lifecycle_state,
+            "version": belief.lifecycle_version,
+        }
+    return value
 
 
 # 功能：拦截题面直接包含旧结论/解释/引用或URL；人工中性声明不等于语义无泄漏证明。
@@ -142,7 +150,7 @@ async def support_snapshot(repo, belief_id):
     return sources
 
 
-# 功能：冻结已接纳高置信且无开放争议的人工选样，保存新旧配置身份和支持快照；无模型调用。
+# 功能：只冻结active且高置信/无争议的人工选样，保存身份/支持快照；归档不能用于新收费盲审。
 async def freeze_audit(repo, manifest, old_identity, new_identity):
     if old_identity == new_identity:
         raise ValueError("候选模型身份与当前配置相同，不能标为模型迁移盲审")
@@ -151,6 +159,7 @@ async def freeze_audit(repo, manifest, old_identity, new_identity):
         belief = await repo.s.get(models.Belief, question.belief_id)
         if (
             belief is None
+            or belief.lifecycle_state != "active"
             or belief.status not in {"supported", "verified"}
             or not 0.8 <= belief.confidence <= 1
         ):
@@ -289,7 +298,7 @@ class BeliefMigrationAudit:
             self.steps.bind(attempt.id)
         self.llm.bind(audit_session_id=str(attempt.id), phase=f"belief_audit_{phase}")
 
-    # 功能：检查冻结认知和旧支持列表仍与当前一致；变化项不把新研究嫁接到过期快照。
+    # 功能：检查冻结内容/生命周期与旧支持仍一致，归档再恢复也不能复用旧收费盲审阶段。
     async def current(self, item):
         belief = await self.repo.s.get(models.Belief, UUID(item["belief"]["id"]))
         if (

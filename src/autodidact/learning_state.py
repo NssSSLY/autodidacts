@@ -92,7 +92,7 @@ class LearningState:
         attempt.result = {**previous, **payload, "checkpoint": stage, "checkpoints": stages}
         await self.s.commit()
 
-    # 功能：返回 supported/verified 且无开放争议的记忆快照，供工作台和实验使用。
+    # 功能：返回active且supported/verified、无开放争议的新记忆快照，不改已冻结旧实验。
     async def accepted_memory(self, limit=200):
         has_dispute = exists(
             select(models.Dispute.id).where(
@@ -105,6 +105,7 @@ class LearningState:
                 select(models.Belief)
                 .where(
                     models.Belief.status.in_(["supported", "verified"]),
+                    models.Belief.lifecycle_state == "active",
                     ~has_dispute,
                 )
                 .order_by(models.Belief.confidence.desc(), models.Belief.updated_at.desc())
@@ -267,9 +268,13 @@ class LearningState:
             ).all()
         )
 
-    # 功能：按触发文本和置信度选择已经独立验证的技能，候选技能不进入自动规划。
+    # 功能：仅从active且已独立验证技能按触发文本/置信度选择，归档/候选不进入新规划。
     async def selected_skills(self, title, limit=2):
-        rows = (await self.s.scalars(select(models.Skill))).all()
+        rows = (
+            await self.s.scalars(
+                select(models.Skill).where(models.Skill.lifecycle_state == "active")
+            )
+        ).all()
         terms = set(title.casefold().split())
         eligible = [
             s

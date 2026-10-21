@@ -54,7 +54,7 @@ async def queue_belief_review(repo, belief, reason: str, parent_goal_id=None, tr
     return goal
 
 
-# 功能：筛选超过复核周期且未撤回的旧信念，有界排队；年龄仅是复核线索，不降低置信度。
+# 功能：默认仅对active旧信念排周期复核；归档仍可显式核查/冲突调查，年龄不判断真伪。
 async def queue_stale_reviews(repo, limit: int = 3):
     cutoff = datetime.now(UTC) - timedelta(days=agent_config().learning.memory_review_days)
     rows = (
@@ -63,6 +63,7 @@ async def queue_stale_reviews(repo, limit: int = 3):
             .where(
                 models.Belief.status.in_(["provisional", "supported", "verified", "weakened"]),
                 models.Belief.created_at < cutoff,
+                models.Belief.lifecycle_state == "active",
             )
             .order_by(models.Belief.created_at)
             .limit(100)

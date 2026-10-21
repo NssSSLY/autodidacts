@@ -7,7 +7,7 @@ from autodidact.learning.ground_truth import evaluation_groups
 from autodidact.provider_runtime import provider_health
 
 
-# 功能：统计目标/信念/争议与按版本模型分组的评估；多组时总均值未知，不混算历史评分。
+# 功能：保留全历史认识论计数并单列active/archived可见性，不靠归档制造验证比例或成长提升。
 async def dashboard(session: AsyncSession) -> dict:
     # 功能：对指定业务表执行行数统计，供状态面板复用。
     async def count(model):
@@ -32,6 +32,11 @@ async def dashboard(session: AsyncSession) -> dict:
         )
     ).scalar_one()
     total_beliefs = await count(models.Belief)
+    archived = await session.scalar(
+        select(func.count())
+        .select_from(models.Belief)
+        .where(models.Belief.lifecycle_state == "archived")
+    )
     score_groups = evaluation_groups((await session.scalars(select(models.Evaluation))).all())
     avg_eval = next(iter(score_groups.values()))["mean_score"] if len(score_groups) == 1 else None
     return {
@@ -39,6 +44,9 @@ async def dashboard(session: AsyncSession) -> dict:
         "goal_success_rate": passed / total_goals if total_goals else 0.0,
         "self_generated_goals_rate": self_generated / total_goals if total_goals else 0.0,
         "beliefs": total_beliefs,
+        "active_beliefs": total_beliefs - archived,
+        "archived_beliefs": archived,
+        "belief_rate_scope": "所有保留信念，含归档；生命周期不是认识论真值或学习效果",
         "verified_beliefs_rate": verified / total_beliefs if total_beliefs else 0.0,
         "average_evaluation_score": avg_eval,
         "evaluation_score_groups": score_groups,
