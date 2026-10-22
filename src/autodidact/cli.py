@@ -17,6 +17,7 @@ from autodidact.cognition_commands import register_cognition_commands
 from autodidact.commands import controlled, register_commands
 from autodidact.config import agent_config, runtime_settings
 from autodidact.db import SessionLocal, engine, init_database
+from autodidact.experiment_commands import register_experiment_commands
 from autodidact.experiments import freeze_suite
 from autodidact.graph_commands import register_graph_commands
 from autodidact.human_review_commands import register_human_review_commands
@@ -42,6 +43,7 @@ register_lifecycle_commands(app)
 register_cognition_commands(app)
 register_skill_commands(app)
 register_human_review_commands(app)
+register_experiment_commands(app)
 
 
 # 功能：按 LOG_LEVEL 设置标准日志格式，供学习进程输出阶段与错误。

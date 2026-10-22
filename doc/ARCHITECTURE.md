@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-22；最新F05人工复核窄动作闭环，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。最新功能按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-22；最新F14只读实验/长期观察界面，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。最新功能按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–26节增量索引覆盖业务src/migrations/scripts/tests中的 **144个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
+以下逐文件索引及第18–27节增量索引覆盖业务src/migrations/scripts/tests中的 **146个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
 
-每个业务Python文件有中文“文件职责”；全部 **1124个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独92文件/632方法。增量见第11–26节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件有中文“文件职责”；全部 **1145个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独94文件/653方法。增量见第11–27节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -564,3 +564,22 @@ agent规划只加入正文/适用性/局限，不传反例或答卷，plan冻结
 范围：文件≤64KiB/报告≤2MiB/每信念或主张≤200原证据，超限拒绝；列表投影小字段，单页≤20/offset10000，pending不是依据有效证明。GET /api/human-reviews独立REPEATABLE READ READ ONLY/SQL5秒/总20秒；写只POST /propose或/decide、白名单/严格布尔/无query/控制器锁30秒。原Host/Origin/Token/CSP/安全错误与textContent沿用，页面切换ID清已读凭据、迟到响应拒覆盖、截断或过期禁批，仍可拒绝。
 
 批准不启动研究或改变原真值，但已有授权计划可后续选择新目标并收费，纯排队须先停计划。actor只是本机声明，非生产权限/专家或双人认证；暂无批量审批、自动撤销/取消已批目标、规范书目字段替换或任意真值写入。无新迁移/依赖/配置服务，仍0011/22表；旧包不含该入口，本轮不打包。仅静态检查，pytest/人工/浏览器/实库/模型验收留V26；下一F14。
+
+## 27. F14：有界只读实验与长期观察
+
+| 文件 | 职责与优先方法 |
+| --- | --- |
+| [experiment_dashboard.py](../src/autodidact/experiment_dashboard.py) | ExperimentQuery固定四视图/窗口/对应ID；finite/score_view处理有限数字/重算指标；ExperimentDashboard.window/during创建时间语义，report/dependency_budget载荷门控，usage/errors/daily_learning/coverage真实窗口统计，listing目录，reliable/migration原规则复算，benchmark复用F09有界条件组，detail复用F11/F12与历史声明，show组装；experiment_dashboard独立READ ONLY入口。 |
+| [experiment_commands.py](../src/autodidact/experiment_commands.py) | register_experiment_commands注册一个experiment-dashboard CLI，与网页共用严格参数/只读读者；until用ISO字符串交Pydantic验证时区，不接受无时区日期伪造窗口。 |
+
+调用：CLI或PAGE表格→GET /api/experiments/严格ExperimentQuery→独立会话第一条SET TRANSACTION REPEATABLE READ READ ONLY→SET LOCAL SQL5秒/总30秒→Repository及既有模型→当前数据库快照。无控制器写锁/commit、迁移、模型构造、OperationBudget或报告保存；原report命令仍走reporting.longitudinal_report/保存progress，不悄悄改变旧入口。
+
+总览使用SQL按UTC创建日/资源聚合OperationEvent的有效actual/未结算reserved/known_actual_n/unsettled_n/invalid_n，无有效实耗返回null，价格金额仍配置估算。ModelObservation和OperationEvent安全失败类别分别汇总，未知类别折叠、不读取原prompt/response或异常正文，不相加重叠层。Evaluation最多500条/总JSON16MiB，复用evaluation_groups按原协议代理分组；会话min/max/记录日数只作真实记录描述。
+
+目录只投影ID/类型/创建时间/协议/基准ID，单页≤20/offset10000。report先投影JSON大小≤4MiB，再加载原报告；基准/F11/F12/原评估依赖总量≤16MiB，拒超限，不截断可靠依据。benchmark复用historical_runs最多100报告、实际时间/基线和condition_key；再按窗口筛、各组独立，截断/拒收引用明确，不跨组算总增长。
+
+reliable复用verify_frozen/recompute_run/condition_key/summarize：原答案/冻结真值重算逐题与校准，保持另追同条件完整基线、完整held-out与真实间隔。migration重构四组各自已存记忆条件并复查原hash/组内模型身份，用原评分器重算，完整才给预定差值。F12复用SkillMethods.show/work/summary及grade_answer页内答卷，不用管理或run动作；F11只CognitiveReview.status，0级论证不进事实；F09已存画像只列历史主题/缺口，其它旧报告声明/原审计，不重复计为新实验。
+
+PAGE用createElement/textContent生成资源/错误/条件组/逐题/重复/阶段表与站内UUID追溯，当前页原结构另折叠展示，迟到响应不盖新筛选。沿原Host/Origin/Token/CSP/有界展示；GET无体/重复参数拒绝，无POST或自动加载收费行为。days1–365、until须带时区且非未来，仅筛创建时间；跨请求结算/子阶段为当前读快照，不承诺历史回放。报告ID查看可追窗口外记录，题面/答案不是保密访问隔离。
+
+仍0011/22表、无新schema/依赖/配置或持久回填，旧F08包不含该入口，不混新库。真实空历史不补零/造30天，不以运营成功率或跨度宣布成长。仅静态检查，pytest/人工/浏览器/实库/模型/长期实验留V27；F01–F14基础收口，所有扩展与V01–V27保留。
