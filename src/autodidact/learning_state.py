@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import exists, func, select, text
+from sqlalchemy import and_, exists, func, or_, select, text
 
 from autodidact import models
 from autodidact.config import agent_config
@@ -92,12 +92,20 @@ class LearningState:
         attempt.result = {**previous, **payload, "checkpoint": stage, "checkpoints": stages}
         await self.s.commit()
 
-    # 功能：返回active且supported/verified、无开放争议的新记忆快照，不改已冻结旧实验。
+    # 功能：仅返回active且有正等级来源证据、无开放争议的supported/verified记忆。
     async def accepted_memory(self, limit=200):
         has_dispute = exists(
             select(models.Dispute.id).where(
                 models.Dispute.belief_id == models.Belief.id,
                 models.Dispute.status.in_(["open", "investigating", "unresolved"]),
+            )
+        )
+        has_positive_source_evidence = exists(
+            select(models.Evidence.id).where(
+                models.Evidence.belief_id == models.Belief.id,
+                models.Evidence.stance == "support",
+                models.Evidence.evidence_level > 0,
+                models.Evidence.source_id.is_not(None),
             )
         )
         rows = (
@@ -107,6 +115,7 @@ class LearningState:
                     models.Belief.status.in_(["supported", "verified"]),
                     models.Belief.lifecycle_state == "active",
                     ~has_dispute,
+                    has_positive_source_evidence,
                 )
                 .order_by(models.Belief.confidence.desc(), models.Belief.updated_at.desc())
                 .limit(limit)
@@ -255,15 +264,26 @@ class LearningState:
         )
         return max(0, agent_config().learning.daily_goal_limit - generated)
 
-    # 功能：读取开放、调查中或未解决争议，按时间排序并限制数量。
-    async def open_disputes(self, limit=20):
+    # 功能：按创建时间和ID读取开放争议，支持稳定游标分页，避免队列前段耗尽时饥饿。
+    async def open_disputes(self, limit=20, *, after=None):
+        query = select(models.Dispute).where(
+            models.Dispute.status.in_(["open", "investigating", "unresolved"])
+        )
+        if after:
+            created_at, item_id = after
+            query = query.where(
+                or_(
+                    models.Dispute.created_at > created_at,
+                    and_(
+                        models.Dispute.created_at == created_at,
+                        models.Dispute.id > item_id,
+                    ),
+                )
+            )
         return list(
             (
                 await self.s.scalars(
-                    select(models.Dispute)
-                    .where(models.Dispute.status.in_(["open", "investigating", "unresolved"]))
-                    .order_by(models.Dispute.created_at)
-                    .limit(limit)
+                    query.order_by(models.Dispute.created_at, models.Dispute.id).limit(limit)
                 )
             ).all()
         )

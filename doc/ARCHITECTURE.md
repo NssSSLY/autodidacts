@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-22；最新F14只读实验/长期观察界面，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。最新功能按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-22；最新代码增量为六项逻辑修复，未改schema，仍HEAD `20261021_0011` /22表；未运行测试/数据库/模型/压力测试，待后置验收。技术入口沿doc/位置，根AGENTS为上下文入口。历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -90,7 +90,7 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/knowledge/__init__.py](../src/autodidact/knowledge/__init__.py) | 声明主张、证据、信念与争议规则子包。 | 包边界 / 无显式方法 |
-| [src/autodidact/knowledge/belief_review.py](../src/autodidact/knowledge/belief_review.py) | 复核原结论原范围，将反对/条件引文关联信念；周期/质量线索排队、独立研究/合格替代句开争议，不直接改旧结论。 | `queue_belief_review`、`queue_stale_reviews`、`BeliefReviewer.observe`、`BeliefReviewer.investigate` |
+| [src/autodidact/knowledge/belief_review.py](../src/autodidact/knowledge/belief_review.py) | 复核原结论原范围，将反对/条件引文关联信念；周期/质量线索排队、独立研究/合格替代句开争议，不直接改旧结论；周期扫描按稳定游标分页。 | `queue_belief_review`、`queue_stale_reviews`、`BeliefReviewer.observe`、`BeliefReviewer.investigate` |
 | [src/autodidact/knowledge/bibliography.py](../src/autodidact/knowledge/bibliography.py) | 有界读取本页meta/文章JSON-LD作者/出版日期/DOI、arXiv、PMID声明，保留出处/冲突，生成保守同作品边。 | `article_nodes`、`extract_bibliography`、`publication_datetime`、`identifier_links` |
 | [src/autodidact/knowledge/claim_support.py](../src/autodidact/knowledge/claim_support.py) | 验证候选主张引用是否来自已读原文，区分锚定成功与语义支持。 | `ClaimSupportValidation.anchored_source_ids`、`ClaimSupportValidator.validate`、`ClaimSupportValidator._validate_citation` |
 | [src/autodidact/knowledge/content_quality.py](../src/autodidact/knowledge/content_quality.py) | 按正文结构/引文/撤稿等锚点记录质量理由和上限，模型始终0，晋升/决议只降不升旧等级。 | `assess_content`、`classify_document`、`effective_source_assessment` |
@@ -109,7 +109,7 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/learning/__init__.py](../src/autodidact/learning/__init__.py) | 声明规划、综合、评估与反思子包。 | 包边界 / 无显式方法 |
-| [src/autodidact/learning/closed_book.py](../src/autodidact/learning/closed_book.py) | 隔离出题、记忆辅助闭卷作答、独立核源和裁判评分。 | `ClosedBookEvaluator.evaluate` |
+| [src/autodidact/learning/closed_book.py](../src/autodidact/learning/closed_book.py) | 先校验题量、重复题和迁移题，再隔离出题、记忆辅助闭卷作答、独立核源和裁判评分。 | `ClosedBookEvaluator.evaluate` |
 | [src/autodidact/learning/evaluation_contracts.py](../src/autodidact/learning/evaluation_contracts.py) | 定义考试、答案、核源评分与候选方法的结构化 schema。 | 数据结构、常量或兼容别名 |
 | [src/autodidact/learning/evaluator.py](../src/autodidact/learning/evaluator.py) | 保留 Evaluator 名称作为 ClosedBookEvaluator 的兼容别名，不是第二套评估流程。 | 数据结构、常量或兼容别名 |
 | [src/autodidact/learning/ground_truth.py](../src/autodidact/learning/ground_truth.py) | 严格版本manifest/人工核查声明、四算术白名单真值、精确评分、分集/结构唯一、Wilson/Brier与模型/协议身份分组；无模型/网络/代码执行。 | `ReliableSuite`、`computed_answer`、`grade_answer`、`summarize`、`evaluation_groups` |
@@ -334,7 +334,7 @@ ClaimScope 记录 conditions/time_scope/units，范围正文匹配是保守文�
 
 普通学习HybridRetriever召回旧信念→BeliefReviewer.observe保留原statement/scope→既有原文锚点/claim_scope_v2→ClaimEvidence→Repository.record_belief_evidence。仅库内原文、当前正等级和同句同范围可写信念证据；support/attack/context分别记录，mixed来源不供支持，旧Evidence不覆盖。claim_evidence_id关联当前核验，assessment保存当时模型/范围/理由/上下文/质量快照，不随重新判定改写历史立场。唯一键为belief/锚点/stance，已知唯一竞争在savepoint恢复，外键等错误照常报告。
 
-queue_belief_review按信念/周期/原文触发键复用目标，年龄只排调查；queue_stale_reviews有界100候选、默认3目标，排队受配额限制。支持来源质量下降亦可排队但不伪造正等级反对证据。memory_daily和空目标池调用同一入口；不是常驻计时器，也不是严格保持测试。
+queue_belief_review按信念/周期/原文触发键复用目标，年龄只排调查；queue_stale_reviews以(created_at,id)游标每页100条、过滤近期复核后继续扫描，默认排3目标，排队受配额限制。支持来源质量下降亦可排队但不伪造正等级反对证据。memory_daily和空目标池调用同一入口；不是常驻计时器，也不是严格保持测试。大库公平性与成本尚待实测。
 
 _review_goal→BeliefReviewer.investigate排除旧支持来源URL/正文/出版方/已知血缘→新资料规划/阅读/综合→核验原句并持久立场。另有正等级原文支持的原子替代句且关系达到门槛才创建Dispute/历史和调查目标；仅关系模型意见不在复核旁路选边。缺替代为needs_follow_up，提供方失败/无资料为unknown，按已有max_retry重试后blocked。原结论和置信度不变；开争议只按既有事务标disputed，真正决议仍用四结果Resolver。
 
@@ -497,7 +497,7 @@ knowledge/belief_review.py仅增加可选extra_exclusions冻结排除集，普�
 
 事务：CLI/Web明确提议→snapshot冻结内容/范围/200条内证据与来源摘要/争议/单项版本，单快照≤2MiB→ResearchReport(kind=memory_change_proposal,sha256)不可变→用户指定ID/确认/声明actor/理由→原controller_lock→UUID顺序SELECT FOR UPDATE+populate_existing→当前快照重核→条件版本UPDATE且显式保留updated_at→BeliefHistory/不可变memory_change_decision→专用可变memory_lifecycle_epoch递增→一次commit。重试复用原决定，不覆盖反向选择；数据库失败不能绕过审计，提议/拒绝不改变epoch或实体。
 
-默认读者：learning_state.accepted_memory/selected_skills、repository兼容近期/主题/语义召回和HybridRetriever各通道过滤active；检索旧向量/关键词保留，不在维护时调用嵌入。agent._beliefs_for_claim显式include_archived=True维持原冲突保护；create_belief_from_claim优先复用active同句，否则重观测归档不复活。Claim/Source/会话/报告不在此生命周期范围，候选和历史仍可审计/召回，不当接纳事实。
+默认读者：learning_state.accepted_memory仅接纳有正等级支持来源证据、无开放争议的active信念；selected_skills、repository兼容近期/主题/语义召回和HybridRetriever各通道过滤active；检索旧向量/关键词保留，不在维护时调用嵌入。agent._beliefs_for_claim显式include_archived=True维持原冲突保护；create_belief_from_claim在同一数据库提交中写信念、支持证据和历史，外部嵌入仍在提交后尝试；优先复用active同句，否则重观测归档不复活。Claim/Source/会话/报告不在此生命周期范围，候选和历史仍可审计/召回，不当接纳事实。
 
 跨模块：mastery.knowledge_context仅active支持供当前覆盖，仍保留归档争议/负面与生命周期依据；graph.effective只用active接纳支持，原映射/来源不删，不借代表证据；belief_audit只冻结active且仅版本变化时扩旧快照身份；validate_skill拒归档，commands.skills展示全历史可见性；audit默认含归档且Belief列表可lifecycle筛选。metrics保留全历史验证比例，单列active/archived，不用隐藏记录制造进步。
 

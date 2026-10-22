@@ -283,22 +283,42 @@ class AutonomousLearner:
         quota = await self.repo.goal_quota_remaining()
         if quota <= 0:
             return
-        for dispute in (await self.repo.open_disputes())[:quota]:
-            metadata = dispute.resolution_metadata or {}
-            if (
-                len(metadata.get("investigation_session_ids", []))
-                >= self.cfg.learning.max_dispute_investigations
-            ):
-                continue
-            draft = CandidateGoal(
-                title=f"独立调查争议 {dispute.id}",
-                source=GoalSource.CONFLICT,
-                importance=0.95,
-                uncertainty=1.0,
-            )
-            goal = await self.repo.add_goal(draft, goal_score(draft))
-            goal.metadata_json = {**(goal.metadata_json or {}), "dispute_id": str(dispute.id)}
-            await self.repo.s.commit()
+        queued_disputes = 0
+        dispute_cursor = None
+        while queued_disputes < quota:
+            page = await self.repo.open_disputes(limit=100, after=dispute_cursor)
+            if not page:
+                break
+            for dispute in page:
+                dispute_cursor = (dispute.created_at, dispute.id)
+                metadata = dispute.resolution_metadata or {}
+                if (
+                    len(metadata.get("investigation_session_ids", []))
+                    >= self.cfg.learning.max_dispute_investigations
+                ):
+                    continue
+                draft = CandidateGoal(
+                    title=f"独立调查争议 {dispute.id}",
+                    source=GoalSource.CONFLICT,
+                    importance=0.95,
+                    uncertainty=1.0,
+                )
+                goal, created = await self.repo.add_goal_if_absent(
+                    draft,
+                    goal_score(draft),
+                    metadata={"dispute_id": str(dispute.id)},
+                )
+                if not created and (goal.metadata_json or {}).get("dispute_id") != str(
+                    dispute.id
+                ):
+                    goal.metadata_json = {
+                        **(goal.metadata_json or {}),
+                        "dispute_id": str(dispute.id),
+                    }
+                    await self.repo.s.commit()
+                queued_disputes += int(created)
+                if queued_disputes >= quota:
+                    break
         if await self.repo.next_goal(self.cfg.learning.max_retry) is not None:
             return
         quota = await self.repo.goal_quota_remaining()
@@ -751,12 +771,29 @@ class AutonomousLearner:
                         decision.reason,
                     )
                     continue
+                promotion_evidence = []
+                for source_id in dict.fromkeys(claim.source_ids):
+                    source = source_by_id.get(source_id)
+                    if not source:
+                        continue
+                    quality = effective_source_assessment(source)
+                    if quality.evidence_level <= 0:
+                        continue
+                    promotion_evidence.append(
+                        {
+                            "source_id": source.id,
+                            "evidence_level": quality.evidence_level,
+                            "strength": min(quality.credibility_score, claim.confidence),
+                            "excerpt": await self.repo.supported_excerpt(claim.id, source.id),
+                        }
+                    )
                 belief = await self.repo.create_belief_from_claim(
                     claim,
                     evaluation.score,
                     decision.verified,
                     evidence_score=decision.evidence_score,
                     independent_source_count=decision.independent_source_count,
+                    evidence_records=promotion_evidence,
                 )
                 try:
                     if (
@@ -771,19 +808,6 @@ class AutonomousLearner:
                 except Exception as exc:  # noqa: BLE001 - promotion must not depend on embeddings.
                     log.debug("Belief embedding was not persisted: %s", exc)
                 beliefs_promoted += 1
-                for source_id in dict.fromkeys(claim.source_ids):
-                    source = source_by_id.get(source_id)
-                    if source:
-                        quality = effective_source_assessment(source)
-                        if quality.evidence_level <= 0:
-                            continue
-                        await self.repo.add_evidence(
-                            belief.id,
-                            source.id,
-                            quality.evidence_level,
-                            strength=min(quality.credibility_score, claim.confidence),
-                            excerpt=await self.repo.supported_excerpt(claim.id, source.id),
-                        )
         if runtime_settings().knowledge_graph_enabled:
             self.llm.bind(
                 goal_id=str(goal.id),

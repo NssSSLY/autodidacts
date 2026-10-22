@@ -22,14 +22,15 @@ class LLM(ABC):
     async def text(self, system: str, user: str, *, temperature: float | None = None) -> str:
         raise NotImplementedError
 
-    # 功能：给提示附加 schema，清理 JSON 围栏并由 Pydantic 校验结果，格式错误向调用者报告。
+    # 功能：给提示附加 schema，沿用提供方配置温度并由 Pydantic 校验结构化结果。
     async def structured(self, system: str, user: str, schema: type[T]) -> T:
         instruction = (
             user
             + "\n\nReturn ONLY valid JSON matching this JSON schema:\n"
             + json.dumps(schema.model_json_schema(), ensure_ascii=False)
         )
-        raw = await self.text(system, instruction, temperature=0.1)
+        # 不覆盖温度，让提供方采用运行配置中的默认值。
+        raw = await self.text(system, instruction)
         self.last_response = raw
         raw = raw.strip()
         if raw.startswith("```"):

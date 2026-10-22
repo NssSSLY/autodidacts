@@ -89,7 +89,7 @@ class Repository(LearningState):
         goal, _ = await self.add_goal_if_absent(g, score, parent_goal_id)
         return goal
 
-    # 功能：规范化标题去重活动目标并保存父项/评分/metadata和索引；默认提交，可由人工审批同事务接管提交。
+    # 功能：普通目标按标题去重；文档目标按来源/内容身份去重，并保存metadata和索引。
     async def add_goal_if_absent(
         self,
         g: CandidateGoal,
@@ -103,7 +103,20 @@ class Repository(LearningState):
             select(models.Goal).where(models.Goal.status.in_(_ACTIVE_GOAL_STATUSES))
         )
         goal_key = normalize_text_key(g.title)
+        document_hash = (metadata or {}).get("document_content_hash")
+        document_source_id = (metadata or {}).get("document_source_id")
         for existing in q.scalars():
+            existing_metadata = existing.metadata_json or {}
+            if document_hash or document_source_id:
+                if (
+                    document_hash
+                    and existing_metadata.get("document_content_hash") == document_hash
+                ) or (
+                    document_source_id
+                    and existing_metadata.get("document_source_id") == document_source_id
+                ):
+                    return existing, False
+                continue
             if normalize_text_key(existing.title) == goal_key:
                 return existing, False
 
@@ -591,7 +604,7 @@ class Repository(LearningState):
         )
         return list(q.scalars())
 
-    # 功能：从已批准主张幂等晋升，优先复用active同句；归档同句不自动复活，旧证据/历史仍保留。
+    # 功能：从已批准主张幂等晋升，将信念、来源证据和历史一次提交；归档同句不自动复活。
     async def create_belief_from_claim(
         self,
         claim: models.Claim,
@@ -600,9 +613,16 @@ class Repository(LearningState):
         *,
         evidence_score: float | None = None,
         independent_source_count: int | None = None,
+        evidence_records: list[dict] | None = None,
     ) -> models.Belief:
         if not eligible_claim(claim):
             raise ValueError("复合或结构未通过复核的主张不能直接晋升，需分别核验子主张")
+        supporting_records = [
+            record
+            for record in evidence_records or []
+            if record.get("source_id") and int(record.get("evidence_level", 0)) > 0
+        ]
+        verified = bool(verified and supporting_records)
         q = await self.s.execute(
             select(models.Belief)
             .where(models.Belief.status != BeliefStatus.RETRACTED)
@@ -616,25 +636,38 @@ class Repository(LearningState):
         for existing in q.scalars():
             if normalize_text_key(existing.statement) == statement_key:
                 processed = list((existing.metadata_json or {}).get("promoted_claim_ids", []))
-                if str(claim.id) in processed:
-                    return existing
-                existing.metadata_json = {
-                    **(existing.metadata_json or {}),
-                    "promoted_claim_ids": [*processed, str(claim.id)],
-                }
-                self.s.add(
-                    models.BeliefHistory(
-                        belief_id=existing.id,
-                        action="reobserved",
-                        previous_state={
-                            "status": existing.status,
-                            "confidence": existing.confidence,
-                        },
-                        new_state={"status": existing.status, "confidence": existing.confidence},
-                        reason="等价主张再次通过评估；保留原信念状态，新增证据单独记录",
+                already_processed = str(claim.id) in processed
+                if not already_processed:
+                    existing.metadata_json = {
+                        **(existing.metadata_json or {}),
+                        "promoted_claim_ids": [*processed, str(claim.id)],
+                    }
+                evidence_added = False
+                for record in supporting_records:
+                    evidence_added = (
+                        await self._stage_support_evidence(existing.id, record)
+                    ) or evidence_added
+                if not already_processed or evidence_added:
+                    self.s.add(
+                        models.BeliefHistory(
+                            belief_id=existing.id,
+                            action="reobserved" if not already_processed else "evidence_repaired",
+                            previous_state={
+                                "status": existing.status,
+                                "confidence": existing.confidence,
+                            },
+                            new_state={
+                                "status": existing.status,
+                                "confidence": existing.confidence,
+                            },
+                            reason=(
+                                "等价主张再次通过评估；保留原信念状态并在同一事务记录证据"
+                                if not already_processed
+                                else "补齐既有晋升主张缺失的证据关联"
+                            ),
+                        )
                     )
-                )
-                await self.s.commit()
+                    await self.s.commit()
                 return existing
 
         status = BeliefStatus.VERIFIED if verified else BeliefStatus.PROVISIONAL
@@ -659,6 +692,8 @@ class Repository(LearningState):
         )
         self.s.add(belief)
         await self.s.flush()
+        for record in supporting_records:
+            await self._stage_support_evidence(belief.id, record)
         await self.index.sync("belief", belief)
         hist = models.BeliefHistory(
             belief_id=belief.id,
@@ -670,6 +705,39 @@ class Repository(LearningState):
         self.s.add(hist)
         await self.s.commit()
         return belief
+
+    # 功能：在当前晋升事务中暂存带正等级来源的支持证据；调用者统一提交信念、证据和历史。
+    async def _stage_support_evidence(self, belief_id, record: dict) -> bool:
+        source_id = UUID(str(record["source_id"]))
+        dedup_key = stable_key("evidence", belief_id, source_id, "web_source", "support")
+        existing = await self.s.execute(
+            select(models.Evidence).where(models.Evidence.dedup_key == dedup_key)
+        )
+        if existing.scalar_one_or_none():
+            return False
+        legacy = await self.s.execute(
+            select(models.Evidence).where(
+                models.Evidence.belief_id == belief_id,
+                models.Evidence.source_id == source_id,
+                models.Evidence.kind == "web_source",
+                models.Evidence.stance == "support",
+            )
+        )
+        if legacy.scalar_one_or_none():
+            return False
+        self.s.add(
+            models.Evidence(
+                belief_id=belief_id,
+                source_id=source_id,
+                kind="web_source",
+                stance="support",
+                dedup_key=dedup_key,
+                evidence_level=int(record["evidence_level"]),
+                strength=float(record["strength"]),
+                excerpt=str(record.get("excerpt", ""))[:1500],
+            )
+        )
+        return True
 
     # 功能：按证据键去重保存信念与来源的关系、摘录、等级和强度。
     async def add_evidence(

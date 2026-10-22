@@ -317,16 +317,19 @@ def register_commands(app):
             from autodidact.tools.reader import WebReader
 
             document = read_local_document(path)
-            source = await repo.upsert_source(document, WebReader.hash_text(document.text))
+            content_hash = WebReader.hash_text(document.text)
+            source = await repo.upsert_source(document, content_hash)
             draft = CandidateGoal(
                 title=f"学习本地文档：{document.title}", source="human", importance=0.9
             )
-            goal = await repo.add_goal(draft, goal_score(draft))
-            goal.metadata_json = {
-                **(goal.metadata_json or {}),
-                "document_source_id": str(source.id),
-            }
-            await repo.s.commit()
+            goal, _ = await repo.add_goal_if_absent(
+                draft,
+                goal_score(draft),
+                metadata={
+                    "document_source_id": str(source.id),
+                    "document_content_hash": content_hash,
+                },
+            )
             return {"source_id": str(source.id), "goal_id": str(goal.id), "evidence_level": 1}
 
         print(asyncio.run(controlled(action)))

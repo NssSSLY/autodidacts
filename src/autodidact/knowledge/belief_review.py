@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from autodidact import models
 from autodidact.config import agent_config
@@ -54,35 +54,49 @@ async def queue_belief_review(repo, belief, reason: str, parent_goal_id=None, tr
     return goal
 
 
-# 功能：默认仅对active旧信念排周期复核；归档仍可显式核查/冲突调查，年龄不判断真伪。
+# 功能：游标扫描所有active旧信念后过滤近期复核项，避免前100条近期记录压住后续到期项。
 async def queue_stale_reviews(repo, limit: int = 3):
     cutoff = datetime.now(UTC) - timedelta(days=agent_config().learning.memory_review_days)
-    rows = (
-        await repo.s.scalars(
-            select(models.Belief)
-            .where(
-                models.Belief.status.in_(["provisional", "supported", "verified", "weakened"]),
-                models.Belief.created_at < cutoff,
-                models.Belief.lifecycle_state == "active",
-            )
-            .order_by(models.Belief.created_at)
-            .limit(100)
-        )
-    ).all()
     queued = []
-    for belief in rows:
-        review = (belief.metadata_json or {}).get("latest_evidence_review") or {}
-        try:
-            reviewed = datetime.fromisoformat(review["qualified_at"])
-            if reviewed.tzinfo is not None and reviewed >= cutoff:
-                continue
-        except (KeyError, ValueError, TypeError):
-            pass
-        goal = await queue_belief_review(repo, belief, "age_due: 超过原文复核周期，时效性未知")
-        if goal and goal.status not in {"passed", "blocked"}:
-            queued.append(str(goal.id))
-        if len(queued) >= max(1, min(limit, 20)):
+    target = max(1, min(limit, 20))
+    cursor = None
+    while len(queued) < target:
+        query = select(models.Belief).where(
+            models.Belief.status.in_(["provisional", "supported", "verified", "weakened"]),
+            models.Belief.created_at < cutoff,
+            models.Belief.lifecycle_state == "active",
+        )
+        if cursor:
+            created_at, belief_id = cursor
+            query = query.where(
+                or_(
+                    models.Belief.created_at > created_at,
+                    and_(models.Belief.created_at == created_at, models.Belief.id > belief_id),
+                )
+            )
+        rows = (
+            await repo.s.scalars(
+                query.order_by(models.Belief.created_at, models.Belief.id).limit(100)
+            )
+        ).all()
+        if not rows:
             break
+        for belief in rows:
+            cursor = (belief.created_at, belief.id)
+            review = (belief.metadata_json or {}).get("latest_evidence_review") or {}
+            try:
+                reviewed = datetime.fromisoformat(review["qualified_at"])
+                if reviewed.tzinfo is not None and reviewed >= cutoff:
+                    continue
+            except (KeyError, ValueError, TypeError):
+                pass
+            goal = await queue_belief_review(
+                repo, belief, "age_due: 超过原文复核周期，时效性未知"
+            )
+            if goal and goal.status not in {"passed", "blocked"}:
+                queued.append(str(goal.id))
+            if len(queued) >= target:
+                break
     return queued
 
 
