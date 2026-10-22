@@ -22,6 +22,7 @@ from autodidact.cognitive_review import cognition_action
 from autodidact.cognitive_sources import Role
 from autodidact.db import SessionLocal, engine
 from autodidact.goals.scorer import goal_score
+from autodidact.human_review import ReviewDecision, ReviewQuery, ReviewRequest, human_review_action
 from autodidact.knowledge.graph import GraphQuery, RelationDraft, graph_action
 from autodidact.lifecycle import (
     ChangeRequest,
@@ -125,8 +126,24 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <section><h2>记忆维护 · 建议与可恢复归档</h2><p>只读查看不写状态。生成建议/提交提议不会归档；执行需逐项确认。归档不是判假，恢复不提高置信度；相似或过旧线索只能复核。非破坏性归并只允许同范围文字重复，原证据和历史不转移/删除。</p><div class="row"><select id="maintenance-kind"><option value="belief">信念</option><option value="skill">技能</option></select><select id="maintenance-state"><option>active</option><option>archived</option><option>all</option></select><input class="audit-input" id="maintenance-offset" type="number" min="0" max="10000" value="0"></div><input id="maintenance-entity" placeholder="记忆UUID（查看单项历史/提交提议时用）"><input id="maintenance-proposal" placeholder="提议UUID（查看提议或执行/拒绝时用）"><div class="row"><button id="maintenance-show">只读查看</button><button id="maintenance-suggest">仅生成规则建议</button></div><div class="row"><select id="maintenance-action"><option value="archive">归档提议</option><option value="restore">恢复提议</option><option value="group">重复归并提议</option><option value="review">仅复核线索</option></select><input id="maintenance-target" class="audit-input" placeholder="group的代表记忆UUID"></div><input id="maintenance-reason" placeholder="提议或决定理由（必填）"><input id="maintenance-actor" value="local_user" placeholder="操作人声明"><div class="row"><button id="maintenance-propose">仅保存提议</button><button id="maintenance-apply">确认执行所选提议</button><button id="maintenance-reject">确认拒绝提议</button></div><pre id="maintenance-status"></pre></section>
 <section><h2>认知来源与多模型审查 · 只读</h2><p>先在CLI配置/冻结并显式运行盲答→批判→综合，可能收费；网页这里只查看，不发送模型请求、不改真值或配置。模型一致不等于独立证据，历史来源缺失保持未知。</p><input id="cognition-review" placeholder="审查批次UUID"><div class="row"><button id="cognition-sources">来源配置声明</button><button id="cognition-show">查看阶段与论证图</button></div><div class="row"><select id="cognition-kind"><option>claim</option><option>belief</option><option>observation</option></select><input id="cognition-entity" placeholder="认知记录UUID"><button id="cognition-provenance">只读溯源</button></div><div class="row"><select id="cognition-role"><option>blind</option><option>critique</option><option>synthesis</option></select><input id="cognition-topic" value="general" placeholder="精确主题"><input id="cognition-fallback" placeholder="人工fallback来源ID"><button id="cognition-route">仅查看路由建议</button></div><pre id="cognition-status"></pre></section>
 <section><h2>研究方法与重复对照 · 只读</h2><p>方法需人工登记适用条件/局限/训练出处，再在独立可靠任务上重复A/B，最后显式启用。这里不答题、不收费或改变采用。反例/新案例会暂停方法；回退是不再用该方法，不改核心代码。</p><input id="methods-skill" placeholder="技能UUID（可留空查看列表）"><input id="methods-experiment" placeholder="方法实验UUID（与技能详情二选一）"><input id="methods-offset" type="number" min="0" max="1000" value="0"><button id="methods-show">查看方法/对照与历史</button><pre id="methods-status"></pre></section>
+<section><h2>人工复核 · 提议、核对、逐项决定</h2><p>仅排信念原文复核/已有争议调查，或保存来源书目校正批注；不改真值/证据等级/原书目，不立即研究或收费。actor仅为本机声明。先查看当前认知审计，再提议；批准前会复查冻结依据，变化即拒绝。来源批注的值须逐字出现在已入库原文摘录内。</p><div class="row"><select id="human-action"><option value="review_belief">信念原文复核排队</option><option value="investigate_dispute">已有争议调查排队</option><option value="annotate_source">来源校正批注</option></select><input id="human-entity" placeholder="对应实体UUID"><button id="human-new">生成新请求ID</button></div><input id="human-request" placeholder="请求UUID（重试保留，改内容用新ID）"><input id="human-actor" value="local_user" placeholder="操作人声明"><input id="human-reason" placeholder="提议或决定理由，必填"><div class="row"><select id="human-field"><option>author</option><option>title</option><option>published_at</option></select><input id="human-value" placeholder="仅来源批注：建议值（日期YYYY-MM-DD）"></div><textarea id="human-excerpt" placeholder="仅来源批注：已入库来源的逐字摘录"></textarea><button id="human-propose">只保存冻结提议</button><input id="human-proposal" placeholder="提议UUID（查看详情和决定用）"><div class="row"><select id="human-state"><option>all</option><option>pending</option><option>approved</option><option>rejected</option></select><input id="human-offset" type="number" min="0" max="10000" value="0"><button id="human-show">查看提议详情／列表</button></div><div class="row"><button id="human-approve" disabled>逐项确认批准</button><button id="human-reject" disabled>逐项确认拒绝</button></div><pre id="human-status"></pre></section>
+<p>人工批准本身不调用模型；但若已有授权学习计划运行，新排目标可在后续轮次被执行并收费。只想排队时，请先在运行计划区请求停止并等待当前轮结束。</p>
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||JSON.stringify(x));return x;}
+// 功能：人工复核只走固定动作，决定绑定刚查看的提议摘要；显示截断时不允许网页批准。
+let humanViewed=null,humanSequence=0;
+const humanValue=id=>document.getElementById('human-'+id).value.trim();
+// 功能：清除已读提议凭据，切换输入后必须重新查看才能做决定。
+function humanClear(){humanViewed=null;document.getElementById('human-approve').disabled=true;document.getElementById('human-reject').disabled=true;}
+document.getElementById('human-proposal').oninput=()=>{humanSequence++;humanClear();};
+document.getElementById('human-new').onclick=()=>{humanSequence++;humanClear();document.getElementById('human-request').value=crypto.randomUUID();document.getElementById('human-proposal').value='';};
+// 功能：按提议ID或分页筛选只读展示，迟到响应不覆盖新选择，截断/过期只允许拒绝。
+async function humanShow(){const sequence=++humanSequence;humanClear();let id=humanValue('proposal'),q=new URLSearchParams();if(id)q.set('proposal_id',id);else{q.set('state',humanValue('state'));q.set('offset',humanValue('offset')||'0');}let result=await api('/api/human-reviews?'+q);if(sequence!==humanSequence)return;show('human-status',result);let d=result.view?.data;if(id&&d?.proposal_id===id&&d.state==='pending'){humanViewed={id,hash:d.proposal_sha256};document.getElementById('human-reject').disabled=false;document.getElementById('human-approve').disabled=!!result.display_truncated||d.basis_validity!=='current';}}
+document.getElementById('human-show').onclick=()=>humanShow().catch(e=>show('human-status',e.message));
+document.getElementById('human-propose').onclick=async()=>{try{let request={request_id:humanValue('request'),action:humanValue('action'),entity_id:humanValue('entity'),actor:humanValue('actor'),reason:humanValue('reason')};if(request.action==='annotate_source')request.correction={field:humanValue('field'),value:humanValue('value'),excerpt:humanValue('excerpt')};const sequence=++humanSequence;humanClear();let result=await api('/api/human-reviews/propose',request);if(sequence!==humanSequence)return;document.getElementById('human-proposal').value=result.view.data.proposal_id;await humanShow();}catch(e){show('human-status',e.message);}};
+// 功能：二次确认绑定当前已读摘要，服务器复查依据并原子决定，失败后重查而非自动重发。
+async function humanDecide(choice){try{if(!humanViewed||humanViewed.id!==humanValue('proposal'))throw Error('请先查看所选提议详情');let request={proposal_id:humanViewed.id,proposal_sha256:humanViewed.hash,decision:choice,actor:humanValue('actor'),reason:humanValue('reason'),confirm:true};if(!confirm('确认对提议 '+request.proposal_id+' 执行 '+choice+'？仅排队或批注，不改真值。'))return;const sequence=++humanSequence;humanClear();let result=await api('/api/human-reviews/decide',request);if(sequence===humanSequence)show('human-status',result);}catch(e){show('human-status',e.message);}}
+document.getElementById('human-approve').onclick=()=>humanDecide('approve');document.getElementById('human-reject').onclick=()=>humanDecide('reject');
 // 功能：方法区只请求固定GET只读快照，模型答卷/案例纯文本展示，不执行收费或采用动作。
 document.getElementById('methods-show').onclick=async()=>{try{let q=new URLSearchParams({offset:document.getElementById('methods-offset').value||'0'});let skill=document.getElementById('methods-skill').value.trim(),experiment=document.getElementById('methods-experiment').value.trim();if(skill)q.set('skill_id',skill);if(experiment)q.set('experiment_id',experiment);show('methods-status',await api('/api/skill-methods?'+q));}catch(e){show('methods-status',e.message);}};
 // 功能：F11网页只发送固定GET只读查询，外部回答/论证全部纯文本展示，不触发模型阶段。
@@ -248,6 +265,20 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/human-reviews" or path.startswith("/api/human-reviews/"):
+            if path == "/api/human-reviews" and method == "GET" and not body:
+                parameters = parse_qs(parsed.query, keep_blank_values=True)
+                if any(len(v) != 1 for v in parameters.values()):
+                    raise ValueError("人工复核参数不得重复")
+                result = await human_review_action(engine, "show", query=ReviewQuery.model_validate({k: v[0] for k, v in parameters.items()}))
+            elif path in {"/api/human-reviews/propose", "/api/human-reviews/decide"} and method == "POST" and not parsed.query:
+                if path.endswith("/propose"):
+                    result = await human_review_action(engine, "propose", request=ReviewRequest.model_validate(body))
+                else:
+                    result = await human_review_action(engine, "decide", decision=ReviewDecision.model_validate(body))
+            else:
+                raise ValueError("未知人工复核动作/方法，禁止任意实体写入")
+            return bounded_display({"data": result})
         if path == "/api/skill-methods":
             if method != "GET" or body:
                 raise ValueError("方法网页仅允许无请求体只读GET；不开放收费/登记/采用动作")

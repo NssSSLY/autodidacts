@@ -89,7 +89,7 @@ class Repository(LearningState):
         goal, _ = await self.add_goal_if_absent(g, score, parent_goal_id)
         return goal
 
-    # 功能：规范化标题去重活动目标，新增时原子保存父目标/评分/可选出处metadata及索引，返回创建标记。
+    # 功能：规范化标题去重活动目标并保存父项/评分/metadata和索引；默认提交，可由人工审批同事务接管提交。
     async def add_goal_if_absent(
         self,
         g: CandidateGoal,
@@ -97,6 +97,7 @@ class Repository(LearningState):
         parent_goal_id: UUID | None = None,
         *,
         metadata: dict | None = None,
+        commit: bool = True,
     ) -> tuple[models.Goal, bool]:
         q = await self.s.execute(
             select(models.Goal).where(models.Goal.status.in_(_ACTIVE_GOAL_STATUSES))
@@ -124,8 +125,9 @@ class Repository(LearningState):
         self.s.add(goal)
         await self.s.flush()
         await self.index.sync("goal", goal)
-        await self.s.commit()
-        await self.s.refresh(goal)
+        if commit:
+            await self.s.commit()
+            await self.s.refresh(goal)
         return goal, True
 
     # 功能：按优先级和创建时间选择未开始或未达重试上限的失败目标。

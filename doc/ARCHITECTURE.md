@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-22；最新F12方法条件/反例/重复对照与显式采用，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13/F11/F12按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-22；最新F05人工复核窄动作闭环，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。最新功能按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–25节增量索引覆盖业务src/migrations/scripts/tests中的 **142个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
+以下逐文件索引及第18–26节增量索引覆盖业务src/migrations/scripts/tests中的 **144个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
 
-每个业务Python文件有中文“文件职责”；全部 **1103个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独90文件/611方法。增量见第11–25节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件有中文“文件职责”；全部 **1124个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独92文件/632方法。增量见第11–26节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -546,3 +546,21 @@ memory.py新候选默认method_protocol/F12未启用、旧同日报告不回写�
 agent规划只加入正文/适用性/局限，不传反例或答卷，plan冻结method_definitions；真实管理后才加入独立epoch续跑身份，变更采用/案例或F13归档再恢复不能盲复用旧规划，旧工作项/预算保留。旧未纳管技能不被悄悄迁移；纳管后的旧F11源码忽略metadata采用门控，因此虽仍0011/22表也须停写统一版本，不能混跑。方法回退只是停用，不是软件降级。
 
 工作台GET /api/skill-methods固定只读MethodQuery/重复参数拒绝/无体GET/原回环访问保护与纯文本，数据库重复读READ ONLY、SQL5秒/整体20秒，每页≤20/offset≤1000，收费和管理动作仅CLI显式。无新schema/依赖/服务，22表库存含新协议报告；旧F08包不含新功能、不混0011。本轮仅静态检查，V25后置，未运行pytest/真实库/模型/网页效果/新包；下一F05受控人工，再F14。
+
+## 26. F05：人工复核冻结、逐项确认与原子操作
+
+| 文件 | 实际职责/入口 |
+| --- | --- |
+| [human_review.py](../src/autodidact/human_review.py) | SourceCorrection/ReviewRequest/ReviewDecision/ReviewQuery严格三动作及摘要确认；review_payload/checked/read_review_request有界JSON与完整性；HumanReview.entity/source_basis/belief_basis/basis冻结原实体和证据；propose不可变请求；queue复用目标/配额/旁路；decide原子决定/批注/排队；detail/show只读当前有效性和分页；human_review_action统一只读或锁/限时。 |
+| [human_review_commands.py](../src/autodidact/human_review_commands.py) | register_human_review_commands注册human-reviews、propose-human-review、decide-human-review；决定须--proposal-sha256及--confirm，不隐式研究/迁移。 |
+| [human_review.example.json](../config/human_review.example.json) | 仅占位UUID/理由的无秘密信念复核模板，人工核对后另存个人文件，不当实际批准。 |
+
+数据所有权：原Source/Claim/Belief/Evidence/Dispute/History/评分不改；human_review_proposal与human_review_decision各用请求UUID/提议UUID稳定键，human_source_annotation保存获批来源校正建议。全部ResearchReport协议human_review_v1/完整hash，不新增schema或平行真值库；原22表备份库存自然包含这些报告。
+
+流程：现有认知审计→严格三动作/人工理由→冻结可读原证据/范围/来源书目文字摘要/生命周期或争议主张→先保存提议→独立只读详情/当前basis_validity→携带刚查看的SHA/actor/理由/confirm→controller_lock+实体FOR UPDATE/populate_existing→当前依据一致才批准→Goal/关键词索引或校正批注/不可变决定一次commit。拒绝可处理过期提议而不执行动作；重放须完全相同输入，不覆盖反向选择或删除旧事件。
+
+复用Repository.add_goal_if_absent新增可选commit=False，默认True保持旧调用；此处让外层审批拥有最终提交，index.sync不调用嵌入。信念目标按belief_review_id走原F02；争议按dispute_id走原四结果。已有活动复核/既有争议目标（含终态）复用，不清重试/调查上限；配额不足不落半个目标/批准。来源field只title/author/published_at、value须在excerpt、excerpt须在已入库原文，批准只写批注不改变原字段/血缘或提升质量。
+
+范围：文件≤64KiB/报告≤2MiB/每信念或主张≤200原证据，超限拒绝；列表投影小字段，单页≤20/offset10000，pending不是依据有效证明。GET /api/human-reviews独立REPEATABLE READ READ ONLY/SQL5秒/总20秒；写只POST /propose或/decide、白名单/严格布尔/无query/控制器锁30秒。原Host/Origin/Token/CSP/安全错误与textContent沿用，页面切换ID清已读凭据、迟到响应拒覆盖、截断或过期禁批，仍可拒绝。
+
+批准不启动研究或改变原真值，但已有授权计划可后续选择新目标并收费，纯排队须先停计划。actor只是本机声明，非生产权限/专家或双人认证；暂无批量审批、自动撤销/取消已批目标、规范书目字段替换或任意真值写入。无新迁移/依赖/配置服务，仍0011/22表；旧包不含该入口，本轮不打包。仅静态检查，pytest/人工/浏览器/实库/模型验收留V26；下一F14。
