@@ -194,10 +194,10 @@ def register_commands(app):
 
         print(asyncio.run(controlled(action)))
 
-    # 功能：在独立冻结题上比较指定研究方法并更新候选/验证状态。
+    # 功能：保留旧未纳管技能单次验证入口，F12纳管方法须走新重复对照/显式采用，不由此自动启用。
     @app.command("validate-skill")
     def validate_skill_command(skill_id: str, benchmark_id: str):
-        # 功能：在受控数据库操作中在独立冻结题上比较指定研究方法并更新候选/验证状态。
+        # 功能：在控制器锁内执行旧兼容验证；F12管理项由validate_skill前置拒绝，不绕过新采用门控。
         async def action(repo, llm):
             return await validate_skill(repo, llm, build_judge(engine), skill_id, benchmark_id)
 

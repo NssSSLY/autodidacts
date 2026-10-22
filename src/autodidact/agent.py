@@ -71,6 +71,8 @@ from autodidact.runtime import (
     controller_lock,
 )
 from autodidact.schemas import CandidateGoal, SearchQueryPlan, SourceDocument
+from autodidact.skill_policy import PROTOCOL as METHOD_PROTOCOL
+from autodidact.skill_policy import planning_method, skill_method_epoch
 from autodidact.tools.reader import WebReader
 from autodidact.tools.search import SearchProvider, build_search_provider
 
@@ -120,6 +122,7 @@ class AutonomousLearner:
         self.current_goal = None
         self.current_attempt = None
         self.lifecycle_revision = 0
+        self.method_revision = 0
         self.claim_support = ClaimSupportValidator()
 
         self.support_assessor = ClaimSupportAssessor(llm)
@@ -137,7 +140,7 @@ class AutonomousLearner:
         ids = await self.steps.run("belief_recall", [statement], recall)
         return [row for i in ids if (row := await self.repo.s.get(models.Belief, UUID(i)))]
 
-    # 功能：计算模型/证据/目标及可选F09/F10身份，实际维护后追加F13代数隔离旧规划；未变更保留旧签名。
+    # 功能：计算模型/证据/目标身份；实际F13/F12管理后追加代数隔离旧规划，未变更保留旧签名。
     def _resume_signature(self, goal):
         settings = runtime_settings()
         value = {
@@ -181,11 +184,13 @@ class AutonomousLearner:
             ]
         if getattr(self, "lifecycle_revision", 0):
             value["memory_lifecycle"] = [LIFECYCLE_PROTOCOL, self.lifecycle_revision]
+        if getattr(self, "method_revision", 0):
+            value["skill_methods"] = [METHOD_PROTOCOL, self.method_revision]
         return hashlib.sha256(
             json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()
         ).hexdigest()
 
-    # 功能：收集认知/可选F09掌握及F10关系观察、已验证技能和网页建议，供本次规划冻结。
+    # 功能：收集认知/掌握/关系与已显式启用方法的条件局限，不向规划泄漏方法答卷/反例题面。
     async def _planning_inputs(self, goal):
         context = await self.repo.epistemic_context()
         if runtime_settings().knowledge_graph_enabled:
@@ -203,8 +208,13 @@ class AutonomousLearner:
         )
         skills = await self.repo.selected_skills(goal.title)
         if skills:
-            context += "\n已验证研究方法（非执行指令）:\n" + "\n".join(
-                f"{skill.name}: {skill.procedure}" for skill in skills
+            context += "\n已验证研究方法（非执行指令）:\n" + (
+                json.dumps(
+                    [await planning_method(self.repo, skill) for skill in skills],
+                    ensure_ascii=False,
+                )
+                if any((s.metadata_json or {}).get("method_protocol") for s in skills)
+                else "\n".join(f"{skill.name}: {skill.procedure}" for skill in skills)
             )
         enabled = [p.strip() for p in runtime_settings().enabled_web_models.split(",") if p.strip()]
         if enabled:
@@ -224,7 +234,16 @@ class AutonomousLearner:
                     raise
                 except Exception as exc:  # noqa: BLE001
                     log.warning("网页模型降级：%s", type(exc).__name__)
-        return {"context": context, "skill_ids": [str(skill.id) for skill in skills]}
+        definitions = {
+            str(s.id): s.metadata_json["method_definition_id"]
+            for s in skills
+            if (s.metadata_json or {}).get("method_definition_id")
+        }
+        return {
+            "context": context,
+            "skill_ids": [str(skill.id) for skill in skills],
+            **({"method_definitions": definitions} if definitions else {}),
+        }
 
     # 功能：尽力同步实体关键词和向量索引，索引/嵌入失败不使核心认知写入失效。
     async def _index_entity(self, kind, row):
@@ -426,9 +445,10 @@ class AutonomousLearner:
                     max_retry=self.cfg.learning.max_retry,
                 )
 
-    # 功能：先核对记忆可见性代数再选恢复/新目标；归档/恢复后旧规划不盲续跑，研究仍经原证据门控。
+    # 功能：先核对记忆/方法代数再恢复或选目标；归档或方法采用变更后拒旧规划盲续跑，原证据门控不变。
     async def _run_cycle(self) -> dict:
         self.lifecycle_revision = await lifecycle_epoch(self.repo)
+        self.method_revision = await skill_method_epoch(self.repo)
         learning_session = await self.repo.resumable_attempt()
         resuming = learning_session is not None
         if learning_session:
@@ -437,7 +457,7 @@ class AutonomousLearner:
                 return {
                     "status": "resume_incompatible",
                     "session_id": str(learning_session.id),
-                    "reason": "模型、学习策略、记忆生命周期、主张核验协议或目标已改变；请人工核对/重启，不能混用旧结果",
+                    "reason": "模型、学习/方法策略、记忆生命周期、主张核验协议或目标已改变；请人工核对/重启，不能混用旧结果",
                 }
         else:
             await self.ensure_goal_pool()
@@ -510,6 +530,11 @@ class AutonomousLearner:
                 **learning_session.plan,
                 **plan.model_dump(),
                 "skill_ids": inputs["skill_ids"],
+                **(
+                    {"method_definitions": inputs["method_definitions"]}
+                    if inputs.get("method_definitions")
+                    else {}
+                ),
             }
             await self.repo.s.commit()
         await self._index_entity("goal", goal)

@@ -1,0 +1,9 @@
+{
+  "definition_id": "00000000-0000-0000-0000-000000000000",
+  "benchmark_id": "00000000-0000-0000-0000-000000000000",
+  "label": "首次固定条件方法对照-请替换实际ID与核查",
+  "repeats": 2,
+  "negative_item_ids": ["请填可靠题集中被方法规则排除的test或transfer题ID"],
+  "use_memory": false,
+  "separation_review": {"review_id": "请填真实独立性审查记录", "reviewer": "请填实际审查者", "role": "human", "decision": "approved", "reviewed_at": "2026-10-21T00:00:00Z", "note": "模板不是已完成审查；需核对方法/训练/记忆无评估题或答案泄漏、负例标签与适用边界。"}
+}

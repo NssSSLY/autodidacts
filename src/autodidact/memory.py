@@ -14,6 +14,7 @@ from autodidact.learning.ground_truth import evaluation_groups
 from autodidact.lifecycle import MemoryLifecycle
 from autodidact.mastery import configured_mastery
 from autodidact.normalization import normalize_text_key
+from autodidact.skill_policy import PROTOCOL as SKILL_METHOD_PROTOCOL
 
 
 class MemoryConsolidator:
@@ -21,7 +22,7 @@ class MemoryConsolidator:
     def __init__(self, repo, llm):
         self.repo, self.llm = repo, llm
 
-    # 功能：新UTC日整合active记忆/候选方法与维护建议；只生成F13提议，旧同日报告不回写。
+    # 功能：新UTC日整合active记忆、默认F12不采用候选和F13维护建议，旧同日报告不回写。
     async def consolidate(self):
         day = datetime.now(UTC).date().isoformat()
         existing = await self.repo.get_report("memory_daily", day)
@@ -93,6 +94,8 @@ class MemoryConsolidator:
                     confidence=0.25,
                     metadata_json={
                         "status": "candidate",
+                        "method_protocol": SKILL_METHOD_PROTOCOL,
+                        "method_enabled": False,
                         "source_session_ids": [str(s.id) for s in successes[:10]],
                         "created_by_model": self.llm.model_name,
                     },

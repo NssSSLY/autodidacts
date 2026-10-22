@@ -26,6 +26,7 @@ from autodidact.metrics import dashboard
 from autodidact.retrieval_job_commands import register_retrieval_commands
 from autodidact.runtime import controller_lock
 from autodidact.service_commands import register_service_commands
+from autodidact.skill_commands import register_skill_commands
 
 # CLI异常不展示配置局部变量，避免候选端点配置校验时打印密钥。
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
@@ -38,6 +39,7 @@ register_mastery_commands(app)
 register_graph_commands(app)
 register_lifecycle_commands(app)
 register_cognition_commands(app)
+register_skill_commands(app)
 
 
 # 功能：按 LOG_LEVEL 设置标准日志格式，供学习进程输出阶段与错误。

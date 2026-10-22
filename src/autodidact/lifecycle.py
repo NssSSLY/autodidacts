@@ -80,7 +80,7 @@ async def lifecycle_epoch(repo):
     return payload["revision"]
 
 
-# 功能：只把同类型/同范围/同认识论状态的文字重复项视为可归并，不判断同义或相似结论等价。
+# 功能：仅同类型/范围/状态文字重复可归组；技能还须F12管理身份/定义/采用一致，不证明语义等价。
 def exact_duplicate(kind, left, right):
     if kind == "belief":
         return (
@@ -97,6 +97,10 @@ def exact_duplicate(kind, left, right):
         == normalize_text_key(right.trigger_condition or "")
         and left.procedure == right.procedure
         and (left.metadata_json or {}).get("status") == (right.metadata_json or {}).get("status")
+        and all(
+            (left.metadata_json or {}).get(key) == (right.metadata_json or {}).get(key)
+            for key in ("method_protocol", "method_definition_id", "method_enabled")
+        )
     )
 
 

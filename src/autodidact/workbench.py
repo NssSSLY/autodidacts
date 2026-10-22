@@ -45,6 +45,7 @@ from autodidact.service_runtime import (
     service_health,
     service_logger,
 )
+from autodidact.skill_methods import MethodQuery, skill_method_action
 
 log = logging.getLogger(__name__)
 
@@ -123,8 +124,11 @@ button:disabled{opacity:.5;cursor:default}nav{margin:12px 0}.active{background:#
 <section><h2>概念关系与前置知识</h2><p>只读查看当前关系/原范围/支持/历史，不调用模型。关系不是因果证明；仅supported的requires可排有限前置调查目标，不自动开始研究。模型提取/复核需在CLI显式授权。</p><input id="graph-concept" placeholder="概念UUID（留空查看第一页）"><input id="graph-relation" placeholder="关系UUID（查看详情/历史时填写，概念留空）"><input id="graph-offset" type="number" min="0" max="10000" value="0" placeholder="offset"><div class="row"><button id="graph-show">只读查看</button><button id="graph-refresh">保存当前关系状态</button><button id="graph-queue">仅排前置调查目标</button></div><pre id="graph-status"></pre></section>
 <section><h2>记忆维护 · 建议与可恢复归档</h2><p>只读查看不写状态。生成建议/提交提议不会归档；执行需逐项确认。归档不是判假，恢复不提高置信度；相似或过旧线索只能复核。非破坏性归并只允许同范围文字重复，原证据和历史不转移/删除。</p><div class="row"><select id="maintenance-kind"><option value="belief">信念</option><option value="skill">技能</option></select><select id="maintenance-state"><option>active</option><option>archived</option><option>all</option></select><input class="audit-input" id="maintenance-offset" type="number" min="0" max="10000" value="0"></div><input id="maintenance-entity" placeholder="记忆UUID（查看单项历史/提交提议时用）"><input id="maintenance-proposal" placeholder="提议UUID（查看提议或执行/拒绝时用）"><div class="row"><button id="maintenance-show">只读查看</button><button id="maintenance-suggest">仅生成规则建议</button></div><div class="row"><select id="maintenance-action"><option value="archive">归档提议</option><option value="restore">恢复提议</option><option value="group">重复归并提议</option><option value="review">仅复核线索</option></select><input id="maintenance-target" class="audit-input" placeholder="group的代表记忆UUID"></div><input id="maintenance-reason" placeholder="提议或决定理由（必填）"><input id="maintenance-actor" value="local_user" placeholder="操作人声明"><div class="row"><button id="maintenance-propose">仅保存提议</button><button id="maintenance-apply">确认执行所选提议</button><button id="maintenance-reject">确认拒绝提议</button></div><pre id="maintenance-status"></pre></section>
 <section><h2>认知来源与多模型审查 · 只读</h2><p>先在CLI配置/冻结并显式运行盲答→批判→综合，可能收费；网页这里只查看，不发送模型请求、不改真值或配置。模型一致不等于独立证据，历史来源缺失保持未知。</p><input id="cognition-review" placeholder="审查批次UUID"><div class="row"><button id="cognition-sources">来源配置声明</button><button id="cognition-show">查看阶段与论证图</button></div><div class="row"><select id="cognition-kind"><option>claim</option><option>belief</option><option>observation</option></select><input id="cognition-entity" placeholder="认知记录UUID"><button id="cognition-provenance">只读溯源</button></div><div class="row"><select id="cognition-role"><option>blind</option><option>critique</option><option>synthesis</option></select><input id="cognition-topic" value="general" placeholder="精确主题"><input id="cognition-fallback" placeholder="人工fallback来源ID"><button id="cognition-route">仅查看路由建议</button></div><pre id="cognition-status"></pre></section>
+<section><h2>研究方法与重复对照 · 只读</h2><p>方法需人工登记适用条件/局限/训练出处，再在独立可靠任务上重复A/B，最后显式启用。这里不答题、不收费或改变采用。反例/新案例会暂停方法；回退是不再用该方法，不改核心代码。</p><input id="methods-skill" placeholder="技能UUID（可留空查看列表）"><input id="methods-experiment" placeholder="方法实验UUID（与技能详情二选一）"><input id="methods-offset" type="number" min="0" max="1000" value="0"><button id="methods-show">查看方法/对照与历史</button><pre id="methods-status"></pre></section>
 <script nonce="NONCE">const token='TOKEN';const show=(id,x)=>document.getElementById(id).textContent=JSON.stringify(x,null,2);
 async function api(path,body){let r=await fetch(path,{method:body?'POST':'GET',headers:{'X-Autodidact-Token':token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});let x=await r.json();if(!r.ok)throw Error(x.error||JSON.stringify(x));return x;}
+// 功能：方法区只请求固定GET只读快照，模型答卷/案例纯文本展示，不执行收费或采用动作。
+document.getElementById('methods-show').onclick=async()=>{try{let q=new URLSearchParams({offset:document.getElementById('methods-offset').value||'0'});let skill=document.getElementById('methods-skill').value.trim(),experiment=document.getElementById('methods-experiment').value.trim();if(skill)q.set('skill_id',skill);if(experiment)q.set('experiment_id',experiment);show('methods-status',await api('/api/skill-methods?'+q));}catch(e){show('methods-status',e.message);}};
 // 功能：F11网页只发送固定GET只读查询，外部回答/论证全部纯文本展示，不触发模型阶段。
 async function cognitionAction(action){try{
   const value=id=>document.getElementById('cognition-'+id).value.trim();let q=new URLSearchParams({action});
@@ -244,6 +248,14 @@ class Workbench:
     async def dispatch(self, path, method, body):
         parsed = urlsplit(path)
         path = parsed.path
+        if path == "/api/skill-methods":
+            if method != "GET" or body:
+                raise ValueError("方法网页仅允许无请求体只读GET；不开放收费/登记/采用动作")
+            parameters = parse_qs(parsed.query, keep_blank_values=True)
+            if any(len(v) != 1 for v in parameters.values()):
+                raise ValueError("方法查询参数不得重复")
+            query = MethodQuery.model_validate({k: v[0] for k, v in parameters.items()})
+            return bounded_display({"data": await skill_method_action(engine, "show", query=query)})
         if path == "/api/cognition":
             if method != "GET" or body:
                 raise ValueError("F11网页仅允许无请求体GET，不开放收费/配置/真值写入口")

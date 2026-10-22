@@ -268,7 +268,7 @@ class LearningState:
             ).all()
         )
 
-    # 功能：仅从active且已独立验证技能按触发文本/置信度选择，归档/候选不进入新规划。
+    # 功能：仅选active已验证技能；F12另核显式启用/定义/模型/范围，旧未纳管保留原触发兼容。
     async def selected_skills(self, title, limit=2):
         rows = (
             await self.s.scalars(
@@ -276,15 +276,20 @@ class LearningState:
             )
         ).all()
         terms = set(title.casefold().split())
-        eligible = [
-            s
-            for s in rows
-            if (s.metadata_json or {}).get("status") == "validated"
-            and (
-                terms.intersection((s.trigger_condition or "").casefold().split())
-                or (s.trigger_condition and s.trigger_condition in title)
-            )
-        ]
+        from autodidact.skill_policy import eligible_method
+
+        eligible = []
+        for skill in rows:
+            meta = skill.metadata_json or {}
+            if meta.get("status") != "validated":
+                continue
+            if "method_protocol" in meta:
+                if await eligible_method(self, skill, title):
+                    eligible.append(skill)
+            elif terms.intersection((skill.trigger_condition or "").casefold().split()) or (
+                skill.trigger_condition and skill.trigger_condition in title
+            ):
+                eligible.append(skill)
         return sorted(eligible, key=lambda s: s.confidence, reverse=True)[:limit]
 
     # 功能：拼接指定 Claim/Source 的 supported 原文片段，供决议证据保留真实引用。
@@ -300,7 +305,7 @@ class LearningState:
         ).all()
         return "\n".join(passages)
 
-    # 功能：更新本次使用技能的成功/失败计数与经验置信度，通过会话标记防止重复计数。
+    # 功能：幂等记技能使用成败/经验计数；F12追加不可变会话关联，不将成败当方法因果证明或自动启用。
     async def record_skill_outcome(self, skill_ids, passed, attempt=None):
         if attempt and (attempt.result or {}).get("skills_recorded"):
             return
@@ -312,6 +317,29 @@ class LearningState:
                 skill.confidence = (skill.success_count + 1) / (
                     skill.success_count + skill.failure_count + 2
                 )
+                if attempt and (skill.metadata_json or {}).get("method_protocol"):
+                    from autodidact.skill_policy import method_payload
+
+                    key = f"{attempt.id}:{skill.id}"
+                    if not await self.get_report("skill_use_outcome", key):
+                        self.s.add(
+                            models.ResearchReport(
+                                kind="skill_use_outcome",
+                                report_key=key,
+                                payload=method_payload(
+                                    {
+                                        "skill_id": str(skill.id),
+                                        "session_id": str(attempt.id),
+                                        "goal_id": str(attempt.goal_id),
+                                        "definition_id": (attempt.plan or {})
+                                        .get("method_definitions", {})
+                                        .get(str(skill.id)),
+                                        "passed": bool(passed),
+                                        "note": "同会话采用关联，不证明方法导致成功/失败；不自动改变采用状态或可靠泛化分数。",
+                                    }
+                                ),
+                            )
+                        )
         if attempt:
             attempt.result = {**(attempt.result or {}), "skills_recorded": True}
         await self.s.commit()

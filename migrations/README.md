@@ -1,6 +1,6 @@
 # 数据库迁移说明
 
-更新：2026-10-21。当前HEAD `20261021_0011` /22表，F13六列与旧库升级见第12节；最新F11无新schema，报告/观察兼容见第13节。本轮未执行实数据库迁移。
+更新：2026-10-22。当前HEAD `20261021_0011` /22表，F13六列与旧库升级见第12节；F11报告观察见13节，最新F12无新schema但有采用语义兼容边界，见第14节。本轮未执行实数据库迁移。
 
 ## 1. Revision 链与已有状态影响
 
@@ -173,3 +173,17 @@ ModelObservation.metadata新增cognitive_protocol/review_id/source_id/source_sha
 22表一致备份会自然包含新报告/观察；不需要新init-db启用F11，未升0011的旧库仍先按第12节匹配旧版备份迁移。回退代码保留新记录，旧程序不能恢复F11协议且不含其CLI；不得删除未知入场以触发无痕重发。旧F08 EXE也不含F09/F10/F13，不能混0011新库，本轮无新包。
 
 本轮仅静态编译/帮助/语法与文档核对，未运行pytest、数据库/备份恢复或真实模型/网页。报告重启/并发/阶段事务和外部调用不确定窗口待V24集中验收，不能因无schema变更宣称运行恢复已验证。
+
+## 14. F12方法metadata与旧读者兼容（无新revision）
+
+仍0011/22表，无新列/表/索引。复用Skill.metadata_json保存method_protocol、method_definition_id、method_revision、method_case_revision、method_enabled、method_activation_id；只保留旧字段并增加管理头，不改procedure/Skill.version/原来源/历史答卷。新日整合候选默认F12未采用，旧同日报告不回写。
+
+不可变ResearchReport kind：skill_method_definition、skill_method_case、skill_method_experiment、skill_method_attempt、skill_method_result、skill_method_decision、skill_use_outcome。skill_method_epoch为专用可变代数快照，只有实际注册/案例/采用/回退同事务推进，默认0保持旧续跑身份。定义/训练/生命周期/模型/案例或采用改变不得盲复用旧规划；只读重算原实验不回填新真值/记忆。
+
+无批量迁移：旧技能只有metadata中method_protocol字段**缺失**才保留旧选择/validate-skill兼容；空/未知协议失败关闭。主动register --confirm纳管会暂停原自动采用，新候选/已纳管项不得用旧单次验证绕过重复A/B与显式启用。新人工案例（含成功）令旧对照过期且暂停，正常skill_use_outcome只记录关联，不自动判断因果或变更采用。
+
+Schema相同不代表可混跑：旧F11源码不识别method_enabled/案例版本/epoch，可能仍使用status=validated但已回退的技能。部署须停止全部写者后统一新源码，旧F08 EXE也不含F09/F10/F13/F11/F12，不能混0011。readiness只看结构不能认证读者理解JSON协议。更新前用匹配源码0011备份保留副本，本轮不实际操作数据库。
+
+方法选择回退使用rollback-skill-method留原子事件/头/epoch，保留定义/数据而不用此方法；不是软件降级。若软件回退，优先从纳管前备份恢复新空副本配旧源码，不删除metadata/报告或清库假装未调用，也不要在唯一库做破坏性回退。22表库存会自然包含F12状态，不需要新init-db来启用功能（未升0011旧库仍按12节备份升级）。
+
+本轮未运行pytest/真实库/锁事务/断点/备份恢复、模型/费用/浏览器效果或新EXE；V25和V01–V24后置。操作与兼容见[01第21节](../doc/01使用指南.md#21-f12方法泛化反例与显式采用)、[02第17节](../doc/02部署指南.md#17-f12方法管理的部署与兼容)。

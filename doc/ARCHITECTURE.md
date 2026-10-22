@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-21；最新F11来源/多模型分阶段审查，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13/F11按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-22；最新F12方法条件/反例/重复对照与显式采用，schema仍HEAD `20261021_0011` /22表。技术入口沿doc/位置，根AGENTS为上下文入口。F09/F10/F13/F11/F12按用户要求未运行测试，历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -33,9 +33,9 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–24节增量索引覆盖业务src/migrations/scripts/tests中的 **139个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
+以下逐文件索引及第18–25节增量索引覆盖业务src/migrations/scripts/tests中的 **142个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
 
-每个业务Python文件有中文“文件职责”；全部 **1065个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独87文件/573方法。增量见第11–24节；自动生成的数据模型方法不纳入手工计数。
+每个业务Python文件有中文“文件职责”；全部 **1103个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独90文件/611方法。增量见第11–25节；自动生成的数据模型方法不纳入手工计数。
 
 ### 3.1 入口、控制器、配置与持久状态
 
@@ -525,3 +525,24 @@ ObservedLLM新增可选settings只用于F11单来源估算/采样；所有新版
 工作台CognitionQuery/GET /api/cognition白名单仅sources/show/route/provenance，严格字段/重复参数和原Host/Origin/Token/CSP、有界纯文本；收费阶段只在CLI。来源列表只读本地配置，其他查看独立数据库READ ONLY重复读/SQL5秒/总20秒。无新schema/依赖/常驻任务，仍0011/22表。
 
 route最多200条同指纹/角色/主题观察，所有候选≥3样本才按调用成功率建议；否则保持人工fallback，不自动改配置。Profile最多5项只读参考，旧模型名统计不能跨端点直接排能力。provenance最多20Claim/50观察/100锚点/100信念证据，超限标记；缺身份保持未知，会话共现非生成因果。真实恢复/语义/模型/网页/费用/净收益待V24，本轮不测试；下一F12。
+
+## 25. F12：方法定义、固定重复A/B与显式选择
+
+| 文件 | 实际职责与优先方法 |
+| --- | --- |
+| [skill_policy.py](../src/autodidact/skill_policy.py) | method_payload/check_method有限JSON/摘要；skill_snapshot排除计数/经验置信；method_matches文字范围排除优先；learner_identity无秘密配置身份；skill_method_epoch/advance_method_epoch续跑代数；current_method/eligible_method/ planning_method当前定义与显式采用/安全规划参考。 |
+| [skill_methods.py](../src/autodidact/skill_methods.py) | MethodSpec/MethodCase/ExperimentSpec/MethodQuery严格协议和read_method_file有界输入；SkillMethods.register/session_basis/record_case定义/案例；task_scope/freeze/load固定实验；work/latest/finish/execute/run入场/观察/批次恢复；summary重算成绩；decide原子采用/回退；show/skill_method_action只读/锁/授权入口。 |
+| [skill_commands.py](../src/autodidact/skill_commands.py) | register_skill_commands注册七CLI，管理写须confirm、run须allow-model、决定须request-id；错误不展开配置/校验局部输入。 |
+| [skill_method.example.json](../config/skill_method.example.json) / [skill_case.example.json](../config/skill_case.example.json) / [skill_experiment.example.json](../config/skill_experiment.example.json) | 人工登记/案例/重复对照模板，无凭据/真实数据，空UUID和审查文字必须由用户核对替换。 |
+
+调用：已有Skill→人工登记条件/局限/完成训练来源（显式暂停旧采用）→不可变定义/案例版本→可靠test/transfer、题面与训练直接分离/人工审查、2–3次固定交错A/B→原grade_answer/summarize重算全部预定重复→非Mock完整总/迁移正、test不负且无成对退化→逐项确认采用/回退。负例两臂不给方法、不计正增益；它是文字范围控制而不是强制误用压力/因果证明。所有模型原答复仍0级，不修改原Claim/Belief/Evidence/Dispute/核心代码。
+
+复用ResearchReport七种不可变kind：skill_method_definition/case/experiment/attempt/result/decision（实际均完整前缀）及skill_use_outcome；skill_method_epoch为专用可变快照。管理写持controller_lock/必要Skill行锁刷新，定义/案例/决定、metadata头与epoch同事务；request_id唯一幂等、反向选择不能覆盖旧记录。报告≤2MiB/文件≤64KiB，来源≤20；A/B≤20题/120任务/每项≤3逻辑入场，一次≤20答卷/900秒。一次有界加载最多720工作报告，任务/序号/唯一键/原观察模型与响应hash核对，已评分答卷（包括错答）不重试，历史unknown/不确定发送单列并可追溯。
+
+输入仅问题/固定记忆/与规划相同方法参考，无真值/分集/负例标签/原训练答卷；控制器原可靠评分不接受模型自评。ObservedLLM/ProviderRuntime与逐次预算复用，预算/取消/数据库故障不静默放行，unknown或不确定入场需人工选项，成功观察恢复不重发；发送到入库窗口仍不能exactly-once，逻辑上限不等于实际物理费用。
+
+memory.py新候选默认method_protocol/F12未启用、旧同日报告不回写。learning_state.selected_skills对纳管项检查当前定义/模型/案例和明确采用及范围，未知/空协议拒用，字段缺失才走旧兼容触发；record_skill_outcome保留经验计数并同事务追加关联报告，不证明方法因果。experiments.validate_skill对已纳管项前置拒绝，旧未纳管路径保留；commands.py注释明确两条路径。
+
+agent规划只加入正文/适用性/局限，不传反例或答卷，plan冻结method_definitions；真实管理后才加入独立epoch续跑身份，变更采用/案例或F13归档再恢复不能盲复用旧规划，旧工作项/预算保留。旧未纳管技能不被悄悄迁移；纳管后的旧F11源码忽略metadata采用门控，因此虽仍0011/22表也须停写统一版本，不能混跑。方法回退只是停用，不是软件降级。
+
+工作台GET /api/skill-methods固定只读MethodQuery/重复参数拒绝/无体GET/原回环访问保护与纯文本，数据库重复读READ ONLY、SQL5秒/整体20秒，每页≤20/offset≤1000，收费和管理动作仅CLI显式。无新schema/依赖/服务，22表库存含新协议报告；旧F08包不含新功能、不混0011。本轮仅静态检查，V25后置，未运行pytest/真实库/模型/网页效果/新包；下一F05受控人工，再F14。

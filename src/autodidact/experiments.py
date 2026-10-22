@@ -219,7 +219,7 @@ class ModelMigrationProtocol:
         return {"report_id": str(report.id), **report.payload}
 
 
-# 功能：只验证active技能；要求独立held-out与可靠完整正增益，归档不会通过旧验证自动复活。
+# 功能：保留旧未纳管技能单次观测；F12已纳管须走重复独立A/B和显式启用，归档不自动复活。
 async def validate_skill(repo, llm, judge, skill_id, frozen_id):
     skill = await repo.s.get(models.Skill, UUID(str(skill_id)))
     suite = await load_frozen(repo, frozen_id)
@@ -227,6 +227,8 @@ async def validate_skill(repo, llm, judge, skill_id, frozen_id):
         raise ValueError("技能或冻结基准不存在")
     if skill.lifecycle_state != "active":
         raise ValueError("技能已归档，请先显式恢复，再决定是否进行可能收费的验证")
+    if "method_protocol" in (skill.metadata_json or {}):
+        raise ValueError("F12方法请注册条件/出处后freeze-skill-experiment与run-skill-experiment；单次validate-skill不能代替显式启用")
     reliable = verify_frozen(suite.payload)
     items = [i for i in suite.payload["items"] if i.get("split") != "train"]
     if len(items) < 5:
