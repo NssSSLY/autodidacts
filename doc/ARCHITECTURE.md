@@ -33,7 +33,7 @@ CLI / 本地 Workbench
 
 ## 3. 每个代码文件分别负责什么
 
-以下逐文件索引及第18–27节增量索引覆盖业务src/migrations/scripts/tests中的 **146个Python文件、3个shell/PowerShell脚本、1个PyInstaller spec、1个迁移模板**，不包含.venv、第三方包、构建产物或临时检查工具。tools/codex-sync单列第16节，不纳入业务计数。
+以下逐文件索引及第18–29节增量索引覆盖业务src/migrations/scripts/tests中的149个Python文件及部署脚本（2026-10-23实际清点）；F14阶段146个Python文件为历史计数，新增接纳模块/测试及本次量化脚本已另列。排除.venv、第三方包、构建产物；tools/codex-sync单列第16节。
 
 每个业务Python文件有中文“文件职责”；全部 **1145个显式方法/函数（含测试/私有/嵌套回调）**前有中文“功能”说明，src单独94文件/653方法。增量见第11–27节；自动生成的数据模型方法不纳入手工计数。
 
@@ -149,6 +149,7 @@ CLI / 本地 Workbench
 | [migrations/versions/20261003_0008_belief_review.py](../migrations/versions/20261003_0008_belief_review.py) | 只增加Evidence原文核验关联和立场快照；旧值空/未知，回退丢新增审计，不删除旧结论。 | `upgrade`、`downgrade` |
 | [scripts/autodidact.spec](../scripts/autodidact.spec) | 定义 PyInstaller 资源、隐藏模块和文件夹发布结构，不打包真实密钥、学习数据库或 Chromium 用户资料。 | Analysis / EXE / COLLECT |
 | [scripts/autodidact_launcher.py](../scripts/autodidact_launcher.py) | 作为 EXE 入口分离用户配置与程序资源；默认启动本地工作台。 | `main` |
+| [scripts/measure_scalability.py](../scripts/measure_scalability.py) | 执行四项风险的受限离线合成测量；保留原始计时/内存/操作计数/源码摘要，不连接真实库或模型。 | `main`、`run`、`measure`、各场景说明见中文注释 |
 | [scripts/build_exe.ps1](../scripts/build_exe.ps1) | 使用项目 .venv 安装打包/PDF依赖并生成 EXE 文件夹；会重写构建输出，数据库与用户密钥另行配置。 | 顺序执行的准备/构建步骤 |
 | [scripts/dev_setup.ps1](../scripts/dev_setup.ps1) | Windows 开发环境快捷准备：启动示例数据库，安装开发依赖/Chromium并初始化；会修改环境和数据库，不能当只读检查。 | 顺序执行的准备/构建步骤 |
 | [scripts/dev_setup.sh](../scripts/dev_setup.sh) | 类 Unix 开发环境快捷准备：启动示例数据库，安装开发依赖/Chromium并初始化；不是正式服务部署。 | 顺序执行的准备/构建步骤 |
@@ -158,6 +159,7 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [tests/test_audit_postgres.py](../tests/test_audit_postgres.py) | 显式*_test随机schema验证Source/撤回信念的真实审计查询及READ ONLY强制拒写；缺配置跳过。 | `test_audit_database_enforces_read_only` |
+| [tests/test_accepted_memory_gate.py](../tests/test_accepted_memory_gate.py) | 内存关系查询、通道SQL及工作台调用回归，统一正等级来源支持Evidence接纳门控。 | `test_accepted_reads_require_same_positive_source_edge`、`test_all_retrieval_channels_apply_acceptance_filter`、`test_workbench_ask_only_supplies_accepted_evidence_backed_memory` |
 | [tests/test_provider_runtime.py](../tests/test_provider_runtime.py) | F06离线HTTP/时钟/预算/模型替身验证退避、分类、单探针/旧响应、取消、逐次费用、验证页与网页不重复提交。 | 测试及替身职责见中文注释 |
 | [tests/test_provider_postgres.py](../tests/test_provider_postgres.py) | 显式*_test随机schema检查健康快照跨实例、事务锁/唯一探针及旧信念保留；缺配置跳过。 | `test_health_persistence_single_probe_and_old_belief` |
 | [tests/test_reliable_evaluation.py](../tests/test_reliable_evaluation.py) | 离线替身检查真值/版本/hash、答案不泄漏、训练重合、unknown/成对门控、保持/重评分、技能声明与实际统计消费者分组。 | 测试函数及替身职责见文件内中文说明 |
@@ -592,3 +594,9 @@ PAGE用createElement/textContent生成资源/错误/条件组/逐题/重复/阶�
 `learning_state.accepted_memory`与`retrieval.HybridRetriever.eligible(accepted_only=True)`直接复用该谓词。关键词GIN、模糊匹配、旧RetrievalEntry/Belief向量、新RetrievalVector及最近记录回退均通过同一eligibility；`workbench /api/ask`沿此检索，`include_archived=True`不能绕过接纳门控。普通研究仍只排除retracted并按原生命周期选项决定可见性，不缩小冲突调查资料范围。
 
 此修复仅改变读取资格，不改schema或旧状态/证据/历史，不补造缺失Evidence，不回写冻结实验。离线回归覆盖内存关系谓词、通道SQL构造和问答输入，未执行真实PostgreSQL全文/向量/并发或性能验收；原30项旧夹具失败已于2026-10-23维护消除，详见累计05第47–48节。
+
+## 29. 扩展性离线量化（2026-10-23）
+
+`scripts/measure_scalability.py`独立进程禁止业务网络/子进程/真实.env，使用合成会话调用真实画像、仪表盘、晋升去重和检索方法；LIKE关系投影在内存SQLite执行，索引控制器以存储/嵌入替身运行但保留真实摘要/向量校验。四风险22场景保存全部计时样本、独立Python峰值分配、操作计数/解释计划、配置与6个源码SHA256至`doc/evidence/scalability/20261023-offline.json`。
+
+本次未改动性能算法、schema或依赖声明。测量结果与复跑步骤见[证据说明](evidence/scalability/README.md)，精确范围及未验证项见累计49；不能把Python对象物化、SQLite VM指令或锁临界区替身时间当真实PostgreSQL IO、RSS或锁争用。后续优化优先控制索引固定小批次的平方级累计重复，并保留最终完整性/并发保护和P1接纳规则。

@@ -1,0 +1,483 @@
+{
+  "protocol": "offline_scalability_v1",
+  "created_at_utc": "2026-10-22T16:24:54.124633+00:00",
+  "source_revision": "5361a2dba80b674cfa6aa5266d840968d8a02577",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "platform": "win32",
+  "sqlite_version": "3.53.1",
+  "sqlalchemy_version": "2.1.6",
+  "configuration": {
+    "sizes": [
+      1000,
+      5000,
+      20000
+    ],
+    "index_sizes": [
+      128,
+      512
+    ],
+    "batch_sizes": [
+      16,
+      128
+    ],
+    "payload_bytes": 512,
+    "repeats": 3,
+    "revision": "5361a2dba80b674cfa6aa5266d840968d8a02577",
+    "output": "doc\\evidence\\scalability\\20261023-offline.json"
+  },
+  "methodology": {
+    "warmup_runs_per_scenario": 1,
+    "timing_repeats": 3,
+    "separate_memory_runs": "one per history/dedup/fallback scenario; none for index batches",
+    "timing_clock": "perf_counter wall time; memory tracing disabled during timing"
+  },
+  "source_sha256": {
+    "scripts/measure_scalability.py": "4cb5254368cd2ec6f8ff432c869447243e3e76de46e6a865385ffc22c07db7a4",
+    "src/autodidact/learning_state.py": "929c302624d4efb9142bbca9b2ebf24494dce962a5ead05a16962b2addb4bf10",
+    "src/autodidact/metrics.py": "5ee80b107edc21b36f88608ce3f2d8e718cb6a971dd61affba8f1d429f5f6d8f",
+    "src/autodidact/repository.py": "e1af0b3eb3685a5135ca8b51249577103c2a9225fdd961cb1019e1785d94e4c4",
+    "src/autodidact/retrieval.py": "7158ed76a9b6e4e60bfa7b5eb86babef1811d4546de42e5c9ec4f83cde1f758c",
+    "src/autodidact/retrieval_jobs.py": "f060220c293a14f7b23b4c649080c385b48b6d627da8fd1e56ba88e3f4533429"
+  },
+  "limitations": [
+    "Synthetic Python object materialization, not actual ORM/driver latency.",
+    "LIKE executes on in-memory SQLite; keyword index hit is a fixture.",
+    "Index store and embedding are fixtures; vector validation and controller code are real.",
+    "Lock regions do not measure real locks or contention; sync requests are not DB writes.",
+    "Peak Python allocation excludes DB memory, RSS and prebuilt SQLite data.",
+    "No PostgreSQL, production database, model API or business networking."
+  ],
+  "validation": "All per-scenario operation-count assertions passed.",
+  "results": [
+    {
+      "risk": "history",
+      "scenario": "profiles",
+      "rows_per_table": 1000,
+      "elapsed_ms_samples": [
+        11.202800087630749,
+        11.010500136762857,
+        11.27939997240901
+      ],
+      "median_ms": 11.202800087630749,
+      "peak_python_bytes": 4081451,
+      "counts": {
+        "loaded_observations": 1000,
+        "loaded_evaluations": 1000,
+        "loaded_reports": 1000,
+        "goal_gets": 1000,
+        "payload_bytes": 2048000
+      }
+    },
+    {
+      "risk": "history",
+      "scenario": "dashboard",
+      "rows_per_table": 1000,
+      "elapsed_ms_samples": [
+        5.770199932157993,
+        4.8630996607244015,
+        4.820399917662144
+      ],
+      "median_ms": 4.8630996607244015,
+      "peak_python_bytes": 1257158,
+      "counts": {
+        "loaded_observations": 0,
+        "loaded_evaluations": 1000,
+        "loaded_reports": 0,
+        "goal_gets": 0,
+        "payload_bytes": 512000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "first",
+      "rows": 1000,
+      "elapsed_ms_samples": [
+        4.360499791800976,
+        4.625599831342697,
+        4.180500283837318
+      ],
+      "median_ms": 4.360499791800976,
+      "peak_python_bytes": 7568490,
+      "counts": {
+        "materialized": 1000,
+        "visited": 1,
+        "vector_bytes": 6144000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "new",
+      "rows": 1000,
+      "elapsed_ms_samples": [
+        4.638300277292728,
+        4.782299976795912,
+        4.588499665260315
+      ],
+      "median_ms": 4.638300277292728,
+      "peak_python_bytes": 7596213,
+      "counts": {
+        "materialized": 1000,
+        "visited": 1000,
+        "vector_bytes": 6144000
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 1000,
+      "terms": 1,
+      "elapsed_ms_samples": [
+        2.078600227832794,
+        2.0296000875532627,
+        1.9768001511693
+      ],
+      "median_ms": 2.0296000875532627,
+      "peak_python_bytes": 103912,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 15000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 1000,
+      "terms": 8,
+      "elapsed_ms_samples": [
+        5.19109982997179,
+        5.352200008928776,
+        4.894400015473366
+      ],
+      "median_ms": 5.19109982997179,
+      "peak_python_bytes": 140938,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 85000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "history",
+      "scenario": "profiles",
+      "rows_per_table": 5000,
+      "elapsed_ms_samples": [
+        56.141100358217955,
+        54.89870021119714,
+        54.34409994632006
+      ],
+      "median_ms": 54.89870021119714,
+      "peak_python_bytes": 20391299,
+      "counts": {
+        "loaded_observations": 5000,
+        "loaded_evaluations": 5000,
+        "loaded_reports": 5000,
+        "goal_gets": 5000,
+        "payload_bytes": 10240000
+      }
+    },
+    {
+      "risk": "history",
+      "scenario": "dashboard",
+      "rows_per_table": 5000,
+      "elapsed_ms_samples": [
+        25.141000282019377,
+        23.25610024854541,
+        23.183600045740604
+      ],
+      "median_ms": 23.25610024854541,
+      "peak_python_bytes": 6287118,
+      "counts": {
+        "loaded_observations": 0,
+        "loaded_evaluations": 5000,
+        "loaded_reports": 0,
+        "goal_gets": 0,
+        "payload_bytes": 2560000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "first",
+      "rows": 5000,
+      "elapsed_ms_samples": [
+        21.920100320130587,
+        21.872099954634905,
+        22.553000133484602
+      ],
+      "median_ms": 21.920100320130587,
+      "peak_python_bytes": 37849034,
+      "counts": {
+        "materialized": 5000,
+        "visited": 1,
+        "vector_bytes": 30720000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "new",
+      "rows": 5000,
+      "elapsed_ms_samples": [
+        23.768100421875715,
+        23.836399894207716,
+        23.64990022033453
+      ],
+      "median_ms": 23.768100421875715,
+      "peak_python_bytes": 37876101,
+      "counts": {
+        "materialized": 5000,
+        "visited": 5000,
+        "vector_bytes": 30720000
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 5000,
+      "terms": 1,
+      "elapsed_ms_samples": [
+        3.3831000328063965,
+        2.9615997336804867,
+        2.855100203305483
+      ],
+      "median_ms": 2.9615997336804867,
+      "peak_python_bytes": 102183,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 75000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 5000,
+      "terms": 8,
+      "elapsed_ms_samples": [
+        13.702800031751394,
+        14.402800239622593,
+        13.648799620568752
+      ],
+      "median_ms": 13.702800031751394,
+      "peak_python_bytes": 138713,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 425000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "history",
+      "scenario": "profiles",
+      "rows_per_table": 20000,
+      "elapsed_ms_samples": [
+        364.27030013874173,
+        365.29390001669526,
+        353.0963002704084
+      ],
+      "median_ms": 364.27030013874173,
+      "peak_python_bytes": 81596131,
+      "counts": {
+        "loaded_observations": 20000,
+        "loaded_evaluations": 20000,
+        "loaded_reports": 20000,
+        "goal_gets": 20000,
+        "payload_bytes": 40960000
+      }
+    },
+    {
+      "risk": "history",
+      "scenario": "dashboard",
+      "rows_per_table": 20000,
+      "elapsed_ms_samples": [
+        123.61670006066561,
+        125.07000006735325,
+        126.69240031391382
+      ],
+      "median_ms": 125.07000006735325,
+      "peak_python_bytes": 25163238,
+      "counts": {
+        "loaded_observations": 0,
+        "loaded_evaluations": 20000,
+        "loaded_reports": 0,
+        "goal_gets": 0,
+        "payload_bytes": 10240000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "first",
+      "rows": 20000,
+      "elapsed_ms_samples": [
+        127.26349988952279,
+        133.95150005817413,
+        129.90219984203577
+      ],
+      "median_ms": 129.90219984203577,
+      "peak_python_bytes": 151419130,
+      "counts": {
+        "materialized": 20000,
+        "visited": 1,
+        "vector_bytes": 122880000
+      }
+    },
+    {
+      "risk": "dedup",
+      "scenario": "new",
+      "rows": 20000,
+      "elapsed_ms_samples": [
+        134.9706002511084,
+        131.83150021359324,
+        133.48810002207756
+      ],
+      "median_ms": 133.48810002207756,
+      "peak_python_bytes": 151446845,
+      "counts": {
+        "materialized": 20000,
+        "visited": 20000,
+        "vector_bytes": 122880000
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 20000,
+      "terms": 1,
+      "elapsed_ms_samples": [
+        6.0791997238993645,
+        6.001700181514025,
+        7.081000134348869
+      ],
+      "median_ms": 6.0791997238993645,
+      "peak_python_bytes": 101551,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 300000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "fallback",
+      "rows": 20000,
+      "terms": 8,
+      "elapsed_ms_samples": [
+        46.75929993391037,
+        46.691300347447395,
+        46.9627003185451
+      ],
+      "median_ms": 46.75929993391037,
+      "peak_python_bytes": 140412,
+      "counts": {
+        "index_hits": 1,
+        "fallback_queries": 1,
+        "fallback_vm_steps": 1700000,
+        "query_plan": [
+          "SCAN beliefs",
+          "USE TEMP B-TREE FOR ORDER BY"
+        ]
+      }
+    },
+    {
+      "risk": "index_batches",
+      "rows": 128,
+      "batch_size": 16,
+      "elapsed_ms_samples": [
+        322.94119987636805,
+        314.9002003483474,
+        314.079400151968
+      ],
+      "median_ms": 314.9002003483474,
+      "peak_python_bytes": null,
+      "counts": {
+        "verify_visits": 1152,
+        "completed_verify_visits": 576,
+        "keyword_sync_requests": 576,
+        "repeated_keyword_sync_requests": 448,
+        "populate_calls": 8,
+        "batches": 8,
+        "lock_region_ms": 313.53860069066286,
+        "max_batch_lock_region_ms": 114.23500021919608
+      }
+    },
+    {
+      "risk": "index_batches",
+      "rows": 128,
+      "batch_size": 128,
+      "elapsed_ms_samples": [
+        117.91250016540289,
+        124.60089987143874,
+        116.31899978965521
+      ],
+      "median_ms": 117.91250016540289,
+      "peak_python_bytes": null,
+      "counts": {
+        "verify_visits": 256,
+        "completed_verify_visits": 128,
+        "keyword_sync_requests": 128,
+        "repeated_keyword_sync_requests": 0,
+        "populate_calls": 1,
+        "batches": 1,
+        "lock_region_ms": 115.82639999687672,
+        "max_batch_lock_region_ms": 115.82639999687672
+      }
+    },
+    {
+      "risk": "index_batches",
+      "rows": 512,
+      "batch_size": 16,
+      "elapsed_ms_samples": [
+        4058.653899934143,
+        4049.7347000055015,
+        4060.5156999081373
+      ],
+      "median_ms": 4058.653899934143,
+      "peak_python_bytes": null,
+      "counts": {
+        "verify_visits": 16896,
+        "completed_verify_visits": 8448,
+        "keyword_sync_requests": 8448,
+        "repeated_keyword_sync_requests": 7936,
+        "populate_calls": 32,
+        "batches": 32,
+        "lock_region_ms": 4058.2446986809373,
+        "max_batch_lock_region_ms": 452.9846999794245
+      }
+    },
+    {
+      "risk": "index_batches",
+      "rows": 512,
+      "batch_size": 128,
+      "elapsed_ms_samples": [
+        805.0017999485135,
+        853.1348002143204,
+        827.0319001749158
+      ],
+      "median_ms": 827.0319001749158,
+      "peak_python_bytes": null,
+      "counts": {
+        "verify_visits": 2560,
+        "completed_verify_visits": 1280,
+        "keyword_sync_requests": 1280,
+        "repeated_keyword_sync_requests": 768,
+        "populate_calls": 4,
+        "batches": 4,
+        "lock_region_ms": 825.0003000721335,
+        "max_batch_lock_region_ms": 457.417500205338
+      }
+    }
+  ]
+}
