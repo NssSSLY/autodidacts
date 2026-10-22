@@ -61,7 +61,9 @@ class SequentialSession(FakeSession):
 # 功能：验证大小写/空白等规范化后复用活动目标。
 @pytest.mark.asyncio
 async def test_active_goal_title_is_deduplicated_after_text_normalization():
-    existing = SimpleNamespace(title="调查  VIO 冲突", status=GoalStatus.DISCOVERED)
+    existing = SimpleNamespace(
+        title="调查  VIO 冲突", status=GoalStatus.DISCOVERED, metadata_json={}
+    )
     session = FakeSession([existing])
     repo = Repository(session)  # type: ignore[arg-type]
 

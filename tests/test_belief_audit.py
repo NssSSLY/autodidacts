@@ -58,6 +58,7 @@ async def environment(provider=None):
         topic="隐私主题",
         explanation="旧答案解释",
         status="verified",
+        lifecycle_state="active",
         confidence=0.9,
         evidence_score=0.8,
         test_score=0.7,
@@ -314,6 +315,7 @@ async def test_end_to_end_audit_requires_evidenced_alternative(supported, readab
     from autodidact.schemas import ClaimCitation, ClaimDraft, LearningResult, SourceDocument
 
     session, repo, old_source, belief, _ = fixture()
+    belief.lifecycle_state = "active"
     belief.evidence_score = belief.test_score = belief.stability_score = 0.8
     old_source.url = "https://old.example/support"
     fresh = models.Source(

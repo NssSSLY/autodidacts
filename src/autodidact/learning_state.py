@@ -6,11 +6,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import and_, exists, func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 
 from autodidact import models
 from autodidact.config import agent_config
 from autodidact.enums import GoalStatus
+from autodidact.knowledge.acceptance import accepted_belief_predicate
 from autodidact.learning.ground_truth import digest, evaluation_key
 
 
@@ -94,29 +95,10 @@ class LearningState:
 
     # 功能：仅返回active且有正等级来源证据、无开放争议的supported/verified记忆。
     async def accepted_memory(self, limit=200):
-        has_dispute = exists(
-            select(models.Dispute.id).where(
-                models.Dispute.belief_id == models.Belief.id,
-                models.Dispute.status.in_(["open", "investigating", "unresolved"]),
-            )
-        )
-        has_positive_source_evidence = exists(
-            select(models.Evidence.id).where(
-                models.Evidence.belief_id == models.Belief.id,
-                models.Evidence.stance == "support",
-                models.Evidence.evidence_level > 0,
-                models.Evidence.source_id.is_not(None),
-            )
-        )
         rows = (
             await self.s.scalars(
                 select(models.Belief)
-                .where(
-                    models.Belief.status.in_(["supported", "verified"]),
-                    models.Belief.lifecycle_state == "active",
-                    ~has_dispute,
-                    has_positive_source_evidence,
-                )
+                .where(accepted_belief_predicate())
                 .order_by(models.Belief.confidence.desc(), models.Belief.updated_at.desc())
                 .limit(limit)
             )

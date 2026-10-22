@@ -68,6 +68,19 @@ async def test_generation_upgrade_resume_switch_preserves_legacy(postgres_engine
     assert embedding.calls == 2 and (await other.verify(key))["valid"]
     await other.activate(key)
     async with maker() as session:
+        # 接纳查询要求来源支持边；由夹具显式补齐，不因旧状态是supported就免检。
+        source = models.Source(url="https://evidence.test/legacy", evidence_level=1)
+        session.add(source)
+        await session.flush()
+        session.add(
+            models.Evidence(
+                belief_id=belief_id,
+                source_id=source.id,
+                stance="support",
+                evidence_level=1,
+            )
+        )
+        await session.commit()
         old = await session.get(models.Belief, belief_id)
         assert old.statement == "旧结论" and old.confidence == 0.9 and list(old.embedding) == VECTOR
         entry = await session.scalar(

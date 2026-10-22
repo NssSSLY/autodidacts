@@ -1,6 +1,6 @@
 # 当前技术架构
 
-更新：2026-10-22；最新代码增量为六项逻辑修复，未改schema，仍HEAD `20261021_0011` /22表；未运行测试/数据库/模型/压力测试，待后置验收。技术入口沿doc/位置，根AGENTS为上下文入口。历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
+更新：2026-10-23；P1共享读取谓词与30项旧夹具维护完成，正式离线387通过/16跳过，无schema变化，仍HEAD `20261021_0011` /22表。真实数据库/模型/压力测试未运行。技术入口沿doc/位置，根AGENTS为上下文入口。历史段落保留当时事实；本文不替代[实现/缺口](03现有能力与实现对照.md)或[原始要求](../Autodidact_Full_Conversation_Codex_Handoff.md)。
 
 第一次看代码，可先读第 8 节的通俗说明，再按第 3 节逐文件查职责；方法的具体功能直接写在代码定义上方。
 
@@ -90,6 +90,7 @@ CLI / 本地 Workbench
 | 文件 | 本文件职责 | 优先查看的入口 |
 | --- | --- | --- |
 | [src/autodidact/knowledge/__init__.py](../src/autodidact/knowledge/__init__.py) | 声明主张、证据、信念与争议规则子包。 | 包边界 / 无显式方法 |
+| [src/autodidact/knowledge/acceptance.py](../src/autodidact/knowledge/acceptance.py) | 提供接纳信念的共享SQL谓词：active、supported/verified、无开放争议及正等级来源支持Evidence；只读不改状态。 | `accepted_belief_predicate` |
 | [src/autodidact/knowledge/belief_review.py](../src/autodidact/knowledge/belief_review.py) | 复核原结论原范围，将反对/条件引文关联信念；周期/质量线索排队、独立研究/合格替代句开争议，不直接改旧结论；周期扫描按稳定游标分页。 | `queue_belief_review`、`queue_stale_reviews`、`BeliefReviewer.observe`、`BeliefReviewer.investigate` |
 | [src/autodidact/knowledge/bibliography.py](../src/autodidact/knowledge/bibliography.py) | 有界读取本页meta/文章JSON-LD作者/出版日期/DOI、arXiv、PMID声明，保留出处/冲突，生成保守同作品边。 | `article_nodes`、`extract_bibliography`、`publication_datetime`、`identifier_links` |
 | [src/autodidact/knowledge/claim_support.py](../src/autodidact/knowledge/claim_support.py) | 验证候选主张引用是否来自已读原文，区分锚定成功与语义支持。 | `ClaimSupportValidation.anchored_source_ids`、`ClaimSupportValidator.validate`、`ClaimSupportValidator._validate_citation` |
@@ -583,3 +584,11 @@ reliable复用verify_frozen/recompute_run/condition_key/summarize：原答案/�
 PAGE用createElement/textContent生成资源/错误/条件组/逐题/重复/阶段表与站内UUID追溯，当前页原结构另折叠展示，迟到响应不盖新筛选。沿原Host/Origin/Token/CSP/有界展示；GET无体/重复参数拒绝，无POST或自动加载收费行为。days1–365、until须带时区且非未来，仅筛创建时间；跨请求结算/子阶段为当前读快照，不承诺历史回放。报告ID查看可追窗口外记录，题面/答案不是保密访问隔离。
 
 仍0011/22表、无新schema/依赖/配置或持久回填，旧F08包不含该入口，不混新库。真实空历史不补零/造30天，不以运营成功率或跨度宣布成长。仅静态检查，pytest/人工/浏览器/实库/模型/长期实验留V27；F01–F14基础收口，所有扩展与V01–V27保留。
+
+## 28. 统一接纳信念读取门控（2026-10-22）
+
+`knowledge/acceptance.py`提供`accepted_belief_predicate`：active且supported/verified、无open/investigating/unresolved争议，至少一条同信念support Evidence同时满足等级>0和source_id非空。Evidence/Dispute子查询显式关联外层Belief；多条不合格边不能拼凑为一条合格边，其他信念的支持也不能代用。
+
+`learning_state.accepted_memory`与`retrieval.HybridRetriever.eligible(accepted_only=True)`直接复用该谓词。关键词GIN、模糊匹配、旧RetrievalEntry/Belief向量、新RetrievalVector及最近记录回退均通过同一eligibility；`workbench /api/ask`沿此检索，`include_archived=True`不能绕过接纳门控。普通研究仍只排除retracted并按原生命周期选项决定可见性，不缩小冲突调查资料范围。
+
+此修复仅改变读取资格，不改schema或旧状态/证据/历史，不补造缺失Evidence，不回写冻结实验。离线回归覆盖内存关系谓词、通道SQL构造和问答输入，未执行真实PostgreSQL全文/向量/并发或性能验收；原30项旧夹具失败已于2026-10-23维护消除，详见累计05第47–48节。

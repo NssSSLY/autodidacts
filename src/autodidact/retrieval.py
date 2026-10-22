@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import case, exists, func, or_, select, text
+from sqlalchemy import case, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from autodidact import models
+from autodidact.knowledge.acceptance import accepted_belief_predicate
 from autodidact.runtime import BudgetExceeded
 
 log = logging.getLogger(__name__)
@@ -200,23 +201,15 @@ class HybridRetriever:
     def __init__(self, repo, embedding=None):
         self.repo, self.s, self.embedding = repo, repo.s, embedding
 
-    # 功能：默认过滤归档信念；冲突保护可显式读历史，接纳记忆始终限active且无开放争议。
+    # 功能：接纳模式复用统一状态/生命周期/争议/来源证据门控；普通研究仍可显式读归档。
     def eligible(self, kind, accepted_only, include_archived=False):
         if kind != "belief":
             return True
+        if accepted_only:
+            return accepted_belief_predicate()
         belief = models.Belief
-        visibility = (
-            True if include_archived and not accepted_only else belief.lifecycle_state == "active"
-        )
-        if not accepted_only:
-            return (belief.status != "retracted") & visibility
-        disputed = exists(
-            select(models.Dispute.id).where(
-                models.Dispute.belief_id == belief.id,
-                models.Dispute.status.in_(["open", "investigating", "unresolved"]),
-            )
-        )
-        return (belief.status.in_(["supported", "verified"])) & ~disputed & visibility
+        visibility = True if include_archived else belief.lifecycle_state == "active"
+        return (belief.status != "retracted") & visibility
 
     # 功能：关键词/向量/旧索引/回退统一生命周期过滤；仅冲突防护显式含归档，不删旧索引。
     async def retrieve(

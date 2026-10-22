@@ -282,6 +282,9 @@ def test_scope_protocol_participates_in_resume_signature(monkeypatch):
         brave_search_base_url="",
         enabled_web_models="",
         web_models_config="",
+        mastery_benchmark_id="",
+        mastery_group_id="",
+        knowledge_graph_enabled=False,
     )
     monkeypatch.setattr(agent_module, "runtime_settings", lambda: settings)
     goal = SimpleNamespace(title="scope-test", description="", metadata_json={})

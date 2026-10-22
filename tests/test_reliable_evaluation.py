@@ -433,6 +433,7 @@ async def test_skill_requires_reliable_truth_and_training_provenance():
     attempt = models.LearningSession(id=uuid4(), goal_id=goal.id)
     skill = models.Skill(
         id=uuid4(),
+        lifecycle_state="active",
         procedure=["核对单位"],
         confidence=0.3,
         metadata_json={"source_session_ids": [str(attempt.id)]},
@@ -492,9 +493,10 @@ class ConsumerSession:
     async def execute(self, *args):
         return SimpleNamespace(scalar_one=lambda: 0)
 
-    # 功能：Profile查询默认无记录，捕获新建的派生Profile。
-    async def scalar(self, *args):
-        return None
+    # 功能：COUNT按SQL契约返回整数0，Profile查询返回无记录；不伪造实体结果。
+    async def scalar(self, statement):
+        expression = statement.column_descriptions[0]["expr"]
+        return 0 if getattr(expression, "name", None) == "count" else None
 
     # 功能：返回已知目标供Profile按领域分组。
     async def get(self, model, entity_id):
