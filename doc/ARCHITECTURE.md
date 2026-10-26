@@ -600,3 +600,42 @@ PAGE用createElement/textContent生成资源/错误/条件组/逐题/重复/阶�
 `scripts/measure_scalability.py`独立进程禁止业务网络/子进程/真实.env，使用合成会话调用真实画像、仪表盘、晋升去重和检索方法；LIKE关系投影在内存SQLite执行，索引控制器以存储/嵌入替身运行但保留真实摘要/向量校验。四风险22场景保存全部计时样本、独立Python峰值分配、操作计数/解释计划、配置与6个源码SHA256至`doc/evidence/scalability/20261023-offline.json`。
 
 本次未改动性能算法、schema或依赖声明。测量结果与复跑步骤见[证据说明](evidence/scalability/README.md)，精确范围及未验证项见累计49；不能把Python对象物化、SQLite VM指令或锁临界区替身时间当真实PostgreSQL IO、RSS或锁争用。后续优化优先控制索引固定小批次的平方级累计重复，并保留最终完整性/并发保护和P1接纳规则。
+
+
+## 30. 本机任务执行基础版本（2026-10-25）
+
+本机执行是既有持久研究系统的受控扩展。local-serve无需连接研究库，任务与工具观察独立保存在个人SQLite日志；不替换PostgreSQL/pgvector，不回填旧认知，不把任务完成/命令退出码提升为信念真值。研究循环的allow_shell默认限制保留。
+
+| 文件 | 职责与主要入口 |
+| --- | --- |
+| src/autodidact/local_tools.py | Workspace路径/秘密/链接/版本检查、有界文本与写入差异、固定argv、ProcessTree/execute_command |
+| src/autodidact/local_tasks.py | NewTask/TaskJournal/LocalAgent；单运行器、任务事件、调用预留、逐项摘要确认、模型工具循环、暂停/中断/审阅 |
+| src/autodidact/local_client.py | 独立回环HTTP、Host/Origin/Token/CSP、有界路由、serve_local及register_local_commands |
+| src/autodidact/local_page.py | 嵌入本机任务界面；所有用户/工具文本经textContent展示，完整原始记录可展开 |
+| scripts/start_local.ps1、启动本机任务.cmd | Windows本机目录选择和源码虚拟环境启动，不安装依赖/修改系统配置 |
+| scripts/validate_local.py | 禁业务网络的离线/显式合成本机子进程与回环验收保护 |
+| scripts/check_local_ui.py | 指定已安装浏览器、新建项目/配置、仅回环页面请求的实际界面验收 |
+| tests/test_local_tasks.py | 目录/秘密/版本/确认/恢复/额度/替身规划/内存HTTP协议回归 |
+| tests/test_local_runtime.py | 显式开关控制的真实合成命令、进程树、回环HTTP与完整修改验证闭环 |
+
+Task状态ready→planning→ready/awaiting_approval→executing→ready/failed→review→completed；中止paused，重启原planning/executing变interrupted。先提交执行状态再启动副作用，确认绑定完整动作；不会承诺跨SQLite与文件/命令的原子性或exactly-once。在途未知操作必须人工核对，不自动重放。
+
+本机模型调用复用原LLM结构化接口，但有独立次数预留/局部0级观察，不冒充原研究ModelObservation/Profile或每日研究账本；无已核验研究记忆注入/真实模型质量验证。文件工具边界不是命令的系统权限隔离，pytest仍执行可信项目代码。
+
+## 31. 本机任务示范学习（2026-10-25）
+
+默认`/`由teaching_page呈现，原工具PAGE在`/tools`。LocalWorkbench共用个人TaskJournal和模型配置，教学仅调用原LLM.text，不发起工具操作或连接研究库。教学资料是任务做法与偏好，模型输出保持0级，不改变Belief/Evidence/Dispute及研究技能采用协议。
+
+| 文件 | 实际职责 |
+| --- | --- |
+| src/autodidact/teaching.py | TeachingStore扩展个人SQLite教学表、范围隔离/有界上下文/停用恢复；TeachingService幂等发送/最多4版反馈/共享日配额/有界文本生成/取消及不自动重试 |
+| src/autodidact/teaching_page.py | 教学首页、任务/示范/对话/反馈/模型配置，纯文本展示；刷新保留反馈草稿，不传完整原始提示 |
+| src/autodidact/local_models.py | 本机兼容API配置优先、旧运行配置回退、Windows当前用户DPAPI、原子保存/密钥不回显、换地址需新密钥；Mock拒绝假输出 |
+| scripts/check_teaching_ui.py | 独立项目/日志和替身模型，Edge实际点击示范→修订→认可→后续复用/停用及刷新/XSS回归；输出证据，不测真实质量 |
+| tests/test_teaching.py | 示例实际入模、反馈与版本/幂等/范围隔离、重启保留、Mock/取消/额度与DPAPI合成密钥等20项回归 |
+
+TeachingStore在个人日志增加teaching_courses、teaching_samples、teaching_rules和teaching_runs，不修改研究Alembic/22表或旧工具任务正文。`generating`启动时标为`interrupted`，原模型调用预留保留，未知发送不重放。每个回答版本冻结实际任务/示范/要求/近3轮未受信任对话及模型身份、usage和prompt；页面详情只返回必要答案和使用ID。
+
+教学课程最多30类，每类100个示范/30条要求，页面20轮；模型上下文最多5个示范/24000字符、12条要求/近3轮文本，总prompt64000字符。每次生成120秒，输出最多4096 Token和16000字符，单轮4次、共享UTC每日50次，次数不是金额上限。显式认可才存为示范，明确remember才存原反馈为要求；不会从模型回复自动提取“真理”。停用影响后续资料选择，冻结历史不重写。
+
+最新软件443通过/16跳过和两套实际Edge流程通过，真实模型与研究数据库调用0。首轮45通过/2失败来自run_id=None误排手工示范，已修复并保留失败XML；不能借修复后的流程结果声称真实任务泛化成功。数据兼容见migrations/README第17节，完整证据见evidence/teaching。

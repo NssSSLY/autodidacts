@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "user_date": "2026-10-25",
+  "generated_at": "2026-10-25T02:15:38.169672+00:00",
+  "baseline_revision": "871d0603f3144f8c28b8752a802a6da423afae40",
+  "working_tree": "uncommitted, not pushed",
+  "python": "3.12.14",
+  "platform": "win32",
+  "baseline_tests": {
+    "passed": 387,
+    "skipped": 16
+  },
+  "final_tests": {
+    "passed": 423,
+    "skipped": 16,
+    "failed": 0,
+    "total": 439
+  },
+  "validation_guard": {
+    "blocked": 0,
+    "synthetic_python_subprocesses": 6,
+    "loopback_listeners": 1
+  },
+  "browser": {
+    "browser": "Microsoft Edge headless",
+    "page_errors": [],
+    "external_requests": [],
+    "confirmed_file_write": true,
+    "real_python_syntax_check": true,
+    "history_after_reload": true,
+    "hostile_text_executed": false,
+    "human_review_close": true,
+    "model_calls": 0,
+    "research_database_connections": 0
+  },
+  "source_sha256": {
+    "src/autodidact/local_tools.py": "685802945eb0f0c176437ce4562fffc52f6f4540b50adadb9ffda9b3a6cd4eb5",
+    "src/autodidact/local_tasks.py": "c8b4d184d1bae27595cb12d786ee32ef18267ecab230e9e9eef8fe575469b748",
+    "src/autodidact/local_client.py": "168ef578e5864ececf99d29794c81e28c9d95ca910e49f8b41d5be8444da2e5f",
+    "src/autodidact/local_page.py": "c6023facf10e66615130fde932901ca13198758342343753b1d2b2207064e50d",
+    "src/autodidact/cli.py": "01ea27498aef2c04c1907a15bb6261b27d1592e45d83309378facdf0ccfd5433",
+    "scripts/start_local.ps1": "f59f64c07fd7857df925281786bf1d8b0755b70df3a4bcc3822980f0c8f17865",
+    "启动本机任务.cmd": "3370d76393aed1b6d34f01c1a573622289eb63fd6e7931e55f72b79383e1b995",
+    "scripts/validate_local.py": "9886e8f5f68c976e5b2a27910826d6ada3961e11a01d1cdc226ad21aeb10fc36",
+    "scripts/check_local_ui.py": "679009651a438632164e1a562eca636c7e52eb215d9e677aaa657bd1afa960fd",
+    "tests/test_local_tasks.py": "32e8672308ea8dd133c4759ab38ab8806bdfca105b76f43e43f268f52f1cde48",
+    "tests/test_local_runtime.py": "ef2a20195658574e2012b51bcb460cc4bb7dccca46fd166121b4cdcab7436bfa",
+    "pyproject.toml": "9f268a90934f6e3c43ded20091bf13fa37aa28ececc022a0b3a58d6b09413b82"
+  },
+  "not_verified": [
+    "real model planning and billing",
+    "research PostgreSQL and legacy HTTP/browser",
+    "Linux/macOS",
+    "native desktop window",
+    "new EXE package/signing/upgrades",
+    "OS isolation of untrusted project code",
+    "automatic research memory integration",
+    "cloud device synchronization"
+  ],
+  "windows_launcher": {
+    "source_startup_health_check": true,
+    "reuse_running_service": true,
+    "native_folder_picker_manual_acceptance": false
+  }
+}

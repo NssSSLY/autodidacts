@@ -23,6 +23,7 @@ from autodidact.graph_commands import register_graph_commands
 from autodidact.human_review_commands import register_human_review_commands
 from autodidact.learning.reliable_evaluation import run_benchmark
 from autodidact.lifecycle_commands import register_lifecycle_commands
+from autodidact.local_client import register_local_commands
 from autodidact.mastery_commands import register_mastery_commands
 from autodidact.metrics import dashboard
 from autodidact.retrieval_job_commands import register_retrieval_commands
@@ -44,6 +45,7 @@ register_cognition_commands(app)
 register_skill_commands(app)
 register_human_review_commands(app)
 register_experiment_commands(app)
+register_local_commands(app)
 
 
 # 功能：按 LOG_LEVEL 设置标准日志格式，供学习进程输出阶段与错误。
