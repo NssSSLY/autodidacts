@@ -205,3 +205,11 @@ V26真实唯一并发/事务回滚/读只读与旧数据保全、HTTP/人工使�
 无升级/回填/降级命令用于启用界面；旧库仍按相应revision先匹配备份停写后显式升级，本轮不实迁移。回退停止进程后用兼容版本，不删认知/报告或调整历史时间；原F12禁混旧写者约束仍有效，旧F08包不含F14，不与0011新库混用。
 
 看板只读不代表整个应用只读，旧report CLI仍保存progress；until仅创建时间筛选，非备份恢复/历史回放。报告完整性和评分复算也不认证专家/语义或真实长期效果。V27真实拒写/旧状态/协议/时间/费用/浏览器和人工验收后置；本轮仅静态，不pytest/实库/模型/新包。
+
+## 17. 本机示范学习的SQLite兼容扩展
+
+研究Alembic仍HEAD20261021_0011/22业务表，不连接或修改PostgreSQL，不需要init-db。本机TaskJournal原tasks/model_calls保留；TeachingStore通过CREATE TABLE/INDEX IF NOT EXISTS追加teaching_courses、teaching_samples、teaching_rules、teaching_runs以及各course索引，request_id和origin_run具有唯一约束。无旧任务回填，不制造研究认知或训练成绩。
+
+升级先停止同目录运行器并备份个人任务目录，启动新版自动追加教学表；不自动执行旧对话或历史工具动作。中断generating状态标interrupted，保留调用预留和旧版本供人工核对。页面密钥单独由当前Windows用户DPAPI保护存于model.json，不写入SQLite回答或迁移源码。
+
+回退旧工具版本会忽略教学表，保留资料；不提供删除教学表的downgrade命令。删除任务目录会同时丢失工具历史、示范、规则和对话，删除model.json会丢失该页面保存的模型配置。恢复应使用可信个人备份，不把数据放入Git；跨Windows用户不能保证解密原密钥。实际旧两条任务在本次启动前后正文SHA256一致，合成重启/DPAPI测试通过；未做研究库升级或跨平台迁移验收。

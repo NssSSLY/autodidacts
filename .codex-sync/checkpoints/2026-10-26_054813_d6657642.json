@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "checkpoint_id": "2026-10-26_054813_d6657642",
+  "project_id": "589d84fe-5a7c-4886-8837-618fbf7be86c",
+  "created_at": "2026-10-26T05:48:13+00:00",
+  "goal": "按用户要求推送本机执行与示范学习版本到远端",
+  "summary": "主体7751cbb9038743613f8c0b94590483c4b822feb5已正常推送origin/main并实时核对，43文件；14源摘要与10-25验收一致，本轮未重跑，443通过16跳过和两套Edge为既有真实结果。个人数据/build/旧三文件排除，stash保留；当前补交付文档后正常推送。",
+  "decisions": [
+    "仅交付代码/测试/文档/项目检查点；Git作者按仓库既有身份作命令参数，不修改持久配置，不强推。"
+  ],
+  "modified_files": [
+    "\"doc/05\\345\\274\\200\\345\\217\\221\\350\\277\\207\\347\\250\\213\\344\\270\\216\\345\\242\\236\\351\\207\\217\\350\\256\\260\\345\\275\\225.md\"",
+    ".codex-sync/CURRENT_STATE.md",
+    ".codex-sync/DECISIONS.md",
+    ".codex-sync/PROJECT_CONTEXT.md",
+    ".codex-sync/TODO.md",
+    ".codex-sync/checkpoints/2026-10-14_151407_c44f4f0a.json",
+    ".codex-sync/checkpoints/2026-10-14_151407_c44f4f0a.md",
+    ".codex-sync/history/2026-10-14_151407_c44f4f0a.jsonl"
+  ],
+  "git_branch": "main",
+  "git_head": "7751cbb9038743613f8c0b94590483c4b822feb5",
+  "git_status": [
+    " M .codex-sync/CURRENT_STATE.md",
+    " M .codex-sync/DECISIONS.md",
+    " M .codex-sync/PROJECT_CONTEXT.md",
+    " M .codex-sync/TODO.md",
+    " M \"doc/05\\345\\274\\200\\345\\217\\221\\350\\277\\207\\347\\250\\213\\344\\270\\216\\345\\242\\236\\351\\207\\217\\350\\256\\260\\345\\275\\225.md\"",
+    "?? .codex-sync/checkpoints/2026-10-14_151407_c44f4f0a.json",
+    "?? .codex-sync/checkpoints/2026-10-14_151407_c44f4f0a.md",
+    "?? .codex-sync/history/2026-10-14_151407_c44f4f0a.jsonl"
+  ],
+  "git_diff_summary": [
+    ".codex-sync/CURRENT_STATE.md: +2/-0",
+    ".codex-sync/DECISIONS.md: +2/-0",
+    ".codex-sync/PROJECT_CONTEXT.md: +2/-0",
+    ".codex-sync/TODO.md: +2/-0",
+    "\"doc/05\\345\\274\\200\\345\\217\\221\\350\\277\\207\\347\\250\\213\\344\\270\\216\\345\\242\\236\\351\\207\\217\\350\\256\\260\\345\\275\\225.md\": +11/-0"
+  ],
+  "recent_commits": [
+    "7751cbb feat: add local execution and demonstration learning",
+    "871d060 perf: quantify four scalability risks with offline workloads",
+    "5361a2d fix: unify accepted belief reads and refresh legacy fixtures",
+    "0f22b96 docs: record offline audit findings",
+    "40d4636 docs: record six logic fixes delivery"
+  ],
+  "todos": [
+    "配置真实模型后对具体任务示范和独立材料验收质量/泛化/成本/保持；研究实库、四项性能优化和产品化仍保留。"
+  ],
+  "blockers": []
+}

@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "user_date": "2026-10-25",
+  "generated_at": "2026-10-25T06:37:05.876282+00:00",
+  "baseline_revision": "871d0603f3144f8c28b8752a802a6da423afae40",
+  "working_tree": "uncommitted, not pushed",
+  "python": "3.12.14",
+  "platform": "win32",
+  "baseline_tests": {
+    "passed": 423,
+    "skipped": 16,
+    "failed": 0,
+    "total": 439,
+    "seconds": 10.733
+  },
+  "first_focused_tests": {
+    "passed": 45,
+    "skipped": 0,
+    "failed": 2,
+    "total": 47,
+    "seconds": 2.411
+  },
+  "focused_after_selection_fix": {
+    "passed": 47,
+    "skipped": 0,
+    "failed": 0,
+    "total": 47,
+    "seconds": 2.241
+  },
+  "final_tests": {
+    "passed": 443,
+    "skipped": 16,
+    "failed": 0,
+    "total": 459,
+    "seconds": 11.558
+  },
+  "new_teaching_cases": 20,
+  "validation_guard": {
+    "blocked": 0,
+    "synthetic_python_subprocesses": 6,
+    "loopback_listeners": 1
+  },
+  "skip_scope": {
+    "research_postgres": 13,
+    "research_http": 2,
+    "research_browser": 1
+  },
+  "teaching_browser": {
+    "browser": "Microsoft Edge headless",
+    "page_errors": [],
+    "external_requests": [],
+    "save_demonstration_without_model": true,
+    "mock_generation_blocked": true,
+    "new_input_used_demonstration": true,
+    "feedback_revision_versions": 2,
+    "feedback_draft_survived_refresh": true,
+    "accepted_answer_reused": true,
+    "explicit_rule_reused": true,
+    "deactivated_items_excluded": true,
+    "history_after_reload": true,
+    "hostile_text_executed": false,
+    "synthetic_model_calls": 4,
+    "real_model_calls": 0,
+    "research_database_connections": 0
+  },
+  "tools_browser": {
+    "browser": "Microsoft Edge headless",
+    "page_errors": [],
+    "external_requests": [],
+    "confirmed_file_write": true,
+    "real_python_syntax_check": true,
+    "history_after_reload": true,
+    "hostile_text_executed": false,
+    "human_review_close": true,
+    "model_calls": 0,
+    "research_database_connections": 0
+  },
+  "live_smoke": {
+    "health": true,
+    "teaching_home": true,
+    "tools_page": true,
+    "model_ready": false,
+    "provider": "mock",
+    "teaching_courses": 0,
+    "existing_tasks": 2,
+    "no_token_rejected": true,
+    "existing_task_payloads_unchanged": true,
+    "model_calls": 0
+  },
+  "static_checks": {
+    "ruff": true,
+    "compileall_src": true,
+    "powershell_parser": true
+  },
+  "source_sha256": {
+    "src/autodidact/teaching.py": "33a7cbc1eca788f168c1f5107722235f0cc531a9b2261ffae22187371fc3bb6f",
+    "src/autodidact/teaching_page.py": "156b5f2a9bc465b17c2365b78f992284693474296a20977c7ae77222eac6f990",
+    "src/autodidact/local_models.py": "3428d0b106c19efe687cbd40f78c623053dece4beab4b88c3d6293241f9acae5",
+    "src/autodidact/local_client.py": "c9cf75ff2bf7c045de1df1e0fdc21d88a5002fe79fa04acd9f04492db7163248",
+    "src/autodidact/local_tasks.py": "c8b4d184d1bae27595cb12d786ee32ef18267ecab230e9e9eef8fe575469b748",
+    "src/autodidact/local_tools.py": "685802945eb0f0c176437ce4562fffc52f6f4540b50adadb9ffda9b3a6cd4eb5",
+    "src/autodidact/local_page.py": "c6023facf10e66615130fde932901ca13198758342343753b1d2b2207064e50d",
+    "scripts/start_local.ps1": "974afcc6f730210463c604e626b3cea5d658159b85fcddad01fa990505a9d6de",
+    "scripts/check_teaching_ui.py": "95cc07c4d5f4f373a6bba0c8266a48ca09b813c82419a8500356a34d1e496a35",
+    "scripts/check_local_ui.py": "103574fd9d6db9c8a64cfc8ab3c580070302577c4768f072d593bd4d0f9cf66c",
+    "scripts/validate_local.py": "9886e8f5f68c976e5b2a27910826d6ada3961e11a01d1cdc226ad21aeb10fc36",
+    "tests/test_teaching.py": "2b1030c83c35696a46520d745d495302afd85e368e8372a1954ac17d1027b3f9",
+    "tests/test_local_tasks.py": "32e8672308ea8dd133c4759ab38ab8806bdfca105b76f43e43f268f52f1cde48",
+    "tests/test_local_runtime.py": "ef2a20195658574e2012b51bcb460cc4bb7dccca46fd166121b4cdcab7436bfa"
+  },
+  "limits": [
+    "Synthetic model responses verify context and control flow; no real model quality claim.",
+    "No weight updates or automatic fact promotion.",
+    "Real model calls: 0. Research database connections: 0.",
+    "No real provider billing, generalization, retention or cross-platform acceptance."
+  ],
+  "source_sha256_scope": "Original Windows worktree bytes used in the 2026-10-25 validation; retained unchanged.",
+  "source_git_lf_sha256": {
+    "src/autodidact/teaching.py": "33a7cbc1eca788f168c1f5107722235f0cc531a9b2261ffae22187371fc3bb6f",
+    "src/autodidact/teaching_page.py": "b0893033638f62993c73a5f722d1155ad1ff8667a6cc24a170f1d59fe52bcd7e",
+    "src/autodidact/local_models.py": "3428d0b106c19efe687cbd40f78c623053dece4beab4b88c3d6293241f9acae5",
+    "src/autodidact/local_client.py": "c9cf75ff2bf7c045de1df1e0fdc21d88a5002fe79fa04acd9f04492db7163248",
+    "src/autodidact/local_tasks.py": "c8b4d184d1bae27595cb12d786ee32ef18267ecab230e9e9eef8fe575469b748",
+    "src/autodidact/local_tools.py": "685802945eb0f0c176437ce4562fffc52f6f4540b50adadb9ffda9b3a6cd4eb5",
+    "src/autodidact/local_page.py": "c6023facf10e66615130fde932901ca13198758342343753b1d2b2207064e50d",
+    "scripts/start_local.ps1": "974afcc6f730210463c604e626b3cea5d658159b85fcddad01fa990505a9d6de",
+    "scripts/check_teaching_ui.py": "95cc07c4d5f4f373a6bba0c8266a48ca09b813c82419a8500356a34d1e496a35",
+    "scripts/check_local_ui.py": "103574fd9d6db9c8a64cfc8ab3c580070302577c4768f072d593bd4d0f9cf66c",
+    "scripts/validate_local.py": "9886e8f5f68c976e5b2a27910826d6ada3961e11a01d1cdc226ad21aeb10fc36",
+    "tests/test_teaching.py": "2b1030c83c35696a46520d745d495302afd85e368e8372a1954ac17d1027b3f9",
+    "tests/test_local_tasks.py": "32e8672308ea8dd133c4759ab38ab8806bdfca105b76f43e43f268f52f1cde48",
+    "tests/test_local_runtime.py": "ef2a20195658574e2012b51bcb460cc4bb7dccca46fd166121b4cdcab7436bfa"
+  },
+  "delivery_hash_note": "2026-10-26: index bytes equal validation worktree after CRLF-to-LF normalization only; teaching_page.py had CRLF. No source or test behavior changed."
+}

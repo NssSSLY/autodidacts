@@ -34,6 +34,7 @@ dev = [
 
 [project.scripts]
 autodidact = "autodidact.cli:app"
+autodidact-local = "autodidact.local_client:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/autodidact"]
