@@ -15,6 +15,8 @@ for path in (root / "migrations").rglob("*.py"):
 for name in ("sample.json", "reliable_sample.json", "belief_audit.example.json"):
     datas.append((str(root / "data" / "benchmark" / name), "autodidact/_resources/data/benchmark"))
 datas += collect_data_files("playwright")
+# 工作台资源为包内静态文件；不递归收集个人数据或演示输出。
+datas += collect_data_files("autodidact.ui", includes=["*.html", "*.css", "*.js"])
 hidden = collect_submodules("sqlalchemy.dialects.postgresql") + collect_submodules("asyncpg")
 a = Analysis([str(root / "scripts" / "autodidact_launcher.py")],
              pathex=[str(root / "src")], binaries=[], datas=datas,

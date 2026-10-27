@@ -140,7 +140,10 @@ class LearningState:
 
     # 功能：汇总模型观察、错误和评估/基准记录，更新经验统计而非宣布模型绝对可信。
     async def refresh_model_profiles(self):
-        observations = (await self.s.scalars(select(models.ModelObservation))).all()
+        # 人工粘贴不是一次可核实的模型调用，不进入运营成功率/经验画像样本。
+        observations = (await self.s.scalars(select(models.ModelObservation).where(
+            models.ModelObservation.access_type != "web_manual",
+        ))).all()
         evaluations = (await self.s.scalars(select(models.Evaluation))).all()
         groups = {}
         for obs in observations:

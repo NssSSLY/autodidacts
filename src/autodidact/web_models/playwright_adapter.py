@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from autodidact.schemas import ModelAnswer
 from autodidact.web_models.base import ExternalCognitiveSource
+from autodidact.web_models.profile_lock import profile_lease
 
 
 class WebModelConfig(BaseModel):
@@ -34,26 +35,42 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
 
     # 功能：打开配置页面检查输入框是否存在；浏览器/网站失败返回 False，不绕过障碍。
     async def health_check(self) -> bool:
+        """与登录/提问互斥检查，资料被占用时明确返回不可用。"""
+        try:
+            with profile_lease(self.config.persistent_profile_dir):
+                return await self._health_check_unlocked()
+        except ValueError:
+            return False
+
+    async def _health_check_unlocked(self) -> bool:
+        """检查页面输入框，不发送内容；导航或验证失败也关闭本次浏览器。"""
         try:
             async with async_playwright() as p:
                 ctx = await p.chromium.launch_persistent_context(
                     user_data_dir=str(Path(self.config.persistent_profile_dir)),
                     headless=self.config.headless,
                 )
-                page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-                await page.goto(self.config.url, wait_until="domcontentloaded")
-                from autodidact.provider_runtime import reject_challenge
+                try:
+                    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                    await page.goto(self.config.url, wait_until="domcontentloaded")
+                    from autodidact.provider_runtime import reject_challenge
 
-                reject_challenge(await page.content())
-                ok = await page.locator(self.config.input_selector).count() > 0
-                await ctx.close()
-                return ok
+                    reject_challenge(await page.content())
+                    return await page.locator(self.config.input_selector).count() > 0
+                finally:
+                    await ctx.close()
         # Health checks intentionally collapse provider/UI failures into a degraded state.
         except Exception:  # noqa: BLE001
             return False
 
     # 功能：通过合法配置UI取得等级0回答；F11强制新会话且旧回答清空才发送，不自动登录/重发。
     async def ask(self, prompt: str) -> ModelAnswer:
+        """锁定专用资料后发送一次；忙碌时拒绝，不自动重发。"""
+        with profile_lease(self.config.persistent_profile_dir):
+            return await self._ask_unlocked(prompt)
+
+    async def _ask_unlocked(self, prompt: str) -> ModelAnswer:
+        """沿既有新会话及回答完成检测执行，不复用其他正在操作的浏览器窗口。"""
         async with async_playwright() as p:
             ctx = await p.chromium.launch_persistent_context(
                 user_data_dir=str(Path(self.config.persistent_profile_dir)),
@@ -71,6 +88,8 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
                     locator = page.locator(self.config.new_chat_selector)
                     if self.config.require_new_chat:
                         await locator.first.wait_for(state="visible", timeout=30000)
+                        if await locator.count() != 1:
+                            raise ValueError("新会话选择器必须唯一，拒绝点击不确定目标")
                         await locator.first.click()
                         cleared_deadline = asyncio.get_running_loop().time() + 30
                         while await page.locator(self.config.assistant_message_selector).count():
@@ -82,6 +101,11 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
                 old_count = await page.locator(self.config.assistant_message_selector).count()
                 box = page.locator(self.config.input_selector).first
                 await box.wait_for(state="visible", timeout=30000)
+                if self.config.require_new_chat and (
+                    await page.locator(self.config.input_selector).count() != 1
+                    or await page.locator(self.config.send_selector).count() != 1
+                ):
+                    raise ValueError("独立问题输入框/发送按钮必须唯一，拒绝不确定提交")
                 await box.fill(prompt)
                 await page.locator(self.config.send_selector).first.click()
                 deadline = asyncio.get_running_loop().time() + self.config.response_timeout_seconds
@@ -89,6 +113,8 @@ class PlaywrightWebModelAdapter(ExternalCognitiveSource):
                 while asyncio.get_running_loop().time() < deadline:
                     nodes = page.locator(self.config.assistant_message_selector)
                     count = await nodes.count()
+                    if self.config.require_new_chat and count > 1:
+                        raise ValueError("独立会话匹配多个回答节点，需核对助手最终回答选择器")
                     current = await nodes.last.inner_text() if count > old_count else ""
                     if (
                         self.config.done_selector

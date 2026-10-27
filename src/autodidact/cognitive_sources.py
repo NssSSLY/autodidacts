@@ -145,11 +145,24 @@ class SourceCatalog(BaseModel):
 
 
 # 功能：有界读取JSON清单；路径由本地配置决定，不接受网页请求的任意文件路径。
-def read_catalog():
+def read_catalog(*, auxiliary=None):
+    """合并原人工清单与已启用自动网页来源；人工采集不冒充可执行的独立盲答来源。"""
+    from autodidact.web_models.auxiliary_config import read_registry
+
     path = Path(runtime_settings().cognitive_sources_config)
-    if not path.is_file() or path.stat().st_size > 65536:
-        raise ValueError("请先配置不超过64KiB的COGNITIVE_SOURCES_CONFIG清单")
-    return SourceCatalog.model_validate_json(path.read_text(encoding="utf-8-sig"))
+    sources = []
+    if path.exists():
+        if not path.is_file() or path.stat().st_size > 65536:
+            raise ValueError("请先配置不超过64KiB的COGNITIVE_SOURCES_CONFIG清单")
+        sources = SourceCatalog.model_validate_json(path.read_text(encoding="utf-8-sig")).sources
+    registry = auxiliary if auxiliary is not None else read_registry()[0]
+    sources.extend(
+        CognitiveSource(id=s.id, kind="web", enabled=True, web_provider=s.id)
+        for s in registry.sources if s.enabled and s.mode == "browser"
+    )
+    if not sources:
+        raise ValueError("请配置认知来源清单，或在辅助来源页启用网页提问来源")
+    return SourceCatalog(sources=sources)
 
 
 # 功能：只读汇总精确来源指纹/角色/主题的运营样本，Profile只作有条件参考；未知退回人工fallback。

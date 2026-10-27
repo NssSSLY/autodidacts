@@ -600,3 +600,42 @@ PAGE用createElement/textContent生成资源/错误/条件组/逐题/重复/阶�
 `scripts/measure_scalability.py`独立进程禁止业务网络/子进程/真实.env，使用合成会话调用真实画像、仪表盘、晋升去重和检索方法；LIKE关系投影在内存SQLite执行，索引控制器以存储/嵌入替身运行但保留真实摘要/向量校验。四风险22场景保存全部计时样本、独立Python峰值分配、操作计数/解释计划、配置与6个源码SHA256至`doc/evidence/scalability/20261023-offline.json`。
 
 本次未改动性能算法、schema或依赖声明。测量结果与复跑步骤见[证据说明](evidence/scalability/README.md)，精确范围及未验证项见累计49；不能把Python对象物化、SQLite VM指令或锁临界区替身时间当真实PostgreSQL IO、RSS或锁争用。后续优化优先控制索引固定小批次的平方级累计重复，并保留最终完整性/并发保护和P1接纳规则。
+
+## 30. 分区工作台与隔离预览（2026-10-23）
+
+| 文件 | 职责与主要入口 |
+| --- | --- |
+| `src/autodidact/ui/__init__.py` | `render_page`通过包资源装配内嵌HTML/CSS/JS；默认正式页面，显式preview才注入演示替身；不导入数据库。 |
+| `src/autodidact/ui/page.html` | 七个工作分区、侧边导航、总览、聊天消息容器、原有高级表单，以及新目标/确认/帮助弹窗。 |
+| `src/autodidact/ui/workbench.css` | 桌面/移动布局、可见焦点、卡片、状态、结构化结果与弹窗；全部字体/资源本地，不依赖CDN。 |
+| `src/autodidact/ui/workbench.js` | 从原PAGE提取的审计/实验/人工复核/维护/图谱等接口绑定；保留分页、迟到响应、已读SHA与截断禁批规则。 |
+| `src/autodidact/ui/workspace.js` | `navigate`固定导航；`requestAPI`超时/重复写入防护；`refreshWorkspace/refreshService`状态和运行快照；`submitQuestion/submitGoal`聊天/目标交互；`renderData/renderRecords`纯文本结构化呈现；`askConfirmation`确认；`scheduleRefresh`可见页面轮询。 |
+| `src/autodidact/ui/preview.js` | 独立预览专用的内存示例和fetch替身；所有未知请求也不转发，刷新重置，未模拟的高级写入拒绝。 |
+| `src/autodidact/ui_preview.py` | 标准库ThreadingHTTPServer只监听127.0.0.1；固定首页/Host核对、nonce与禁止连接CSP，不导入配置/数据库/模型，不启动常驻系统服务。 |
+| `tests/test_workbench_ui.py` | 资源装配、唯一ID、无外部资源、正式/演示脚本隔离。 |
+| `tests/test_workbench_browser.py` | 原审计恶意文本/关联/返回/分页回归；新增七区导航、演示目标/对话/引用、桌面/窄屏与真实模式替身的许可/失败/重复写入回归。 |
+
+原 `workbench.py` 保留所有Python API/访问保护，只把PAGE改为资源装配；导入方继续可读PAGE。PyInstaller配方显式收集本地HTML/CSS/JS，部署不新增Node或前端服务器；本轮未重打EXE，wheel实包因本机缺hatchling未验证。
+
+正式问答仍只传本次question，不自动发送历史对话；页面历史在内存，模型观察审计仍沿原后端。知识文本一律textContent，不解释HTML/外部URL；写入不会因超时自动重发。统计显示接口真实值，缺失为未知；流程条只说明步骤，任务阶段/轮数只来自已有进程状态或持久运行快照。
+
+无schema/数据迁移或认知回填。完整受保护离线389通过/18跳过；定向65通过，含3个临时Edge浏览器回归和回环HTTP替身。没有真实库/外部模型/费用或长期实验验收。
+
+## 31. 六站辅助来源配置与观察（2026-10-23）
+
+工作台新增固定 `/api/auxiliary` 读取及save/login/close/check/ask/import显式POST、history只读GET，沿用Host/Origin/Token。配置GET无需数据库；人工观察和真实自动提问需数据库。HTTP仅import允许64KiB请求（内部问题/回答还有字符上限），其他请求保持16KiB。
+
+| 文件 | 职责及主要方法 |
+| --- | --- |
+| src/autodidact/web_models/auxiliary_config.py | 固定六站ID/官方URL、模式及选择器校验；read_registry有界读取，save_source版本检查/单文件原子保存，managed_config只允许启用自动模式 |
+| src/autodidact/web_models/auxiliary.py | AuxiliaryWorkbench管理本进程登录窗口/15分钟计时/检查/动作分发/历史；import_observation写web_manual等级0、幂等但不认证出处 |
+| src/autodidact/web_models/profile_lock.py | file_lease用Windows/POSIX操作系统非阻塞锁；profile_lease按规范化资料路径互斥，不删除用户资料 |
+| src/autodidact/web_models/playwright_adapter.py | 原自动提问增加资料锁、新会话唯一目标/回答节点检查；health_check异常也关闭浏览器 |
+| src/autodidact/web_models/service.py | 保留原YAML入口，六个托管aux_* ID从个人配置装载；继续预算/熔断/模型观察，不自动重发 |
+| src/autodidact/cognitive_sources.py | read_catalog将启用自动来源合并原F11目录；保留旧API来源，重复ID/超过12来源拒绝，人工采集不混入盲答 |
+| src/autodidact/learning_state.py、experiment_dashboard.py | 模型画像及错误统计查询排除web_manual；人工声明不算网站成功调用 |
+| src/autodidact/ui/auxiliary.js | 六卡片/配置草稿/保存/单次授权/人工导入/最近观察，外部回答纯文本；workspace.js导航接线、page.html/css布局、preview.js仅内存演示 |
+| tests/test_web_auxiliary.py | 配置原子性/版本/边界、资料互斥、F11合并、SQL去重意图、授权及失败清理、调用统计排除的离线回归 |
+| tests/test_workbench_browser.py | 新增六站人工留档/取消/XSS/桌面移动布局，以及全拦截合成页面的新会话/一次发送/最终回答适配器验证 |
+
+无新增数据库表/迁移。手动观察的metadata记录collection_method=manual_paste、provenance_verified=false；不写Claim/Evidence/Belief。配置启用只意味着允许后续显式动作；不更换主模型、不改ENABLED_WEB_MODELS、不自动安排F11实验。选择器和网站实测状态不是同一概念，配置清单不记录虚假的“验收通过”。

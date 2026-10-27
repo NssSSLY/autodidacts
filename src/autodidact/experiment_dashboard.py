@@ -231,7 +231,7 @@ class ExperimentDashboard:
                         func.count().label("calls"),
                         func.sum(case((failed, 1), else_=0)).label("failed_calls"),
                     )
-                    .where(self.during(obs.created_at))
+                    .where(self.during(obs.created_at), obs.access_type != "web_manual")
                     .group_by(safe_category)
                     .order_by(safe_category)
                 )

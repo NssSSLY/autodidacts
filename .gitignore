@@ -1,6 +1,7 @@
 .venv/
 .env
 config/cognitive_sources.json
+config/web_auxiliary.json*
 config/my-human-review.json
 __pycache__/
 *.py[cod]

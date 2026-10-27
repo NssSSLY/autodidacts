@@ -25,6 +25,10 @@ class WebModelService:
 
     # 功能：读取 YAML 中指定提供方并校验为 WebModelConfig，配置缺失明确报错。
     def adapter(self, provider):
+        from autodidact.web_models.auxiliary_config import PRESETS, managed_config
+
+        if provider in PRESETS:
+            return PlaywrightWebModelAdapter(managed_config(provider))
         path = Path(runtime_settings().web_models_config)
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         entry = raw.get("providers", {}).get(provider)
